@@ -12,7 +12,7 @@ set(VERSION "0.93.0")
 #-----------------------------------------------------------------------------
 # Options for building
 
-option(BUILD_VERBOSE       "Verbose build output." ON)
+option(BUILD_VERBOSE       "Verbose build output." OFF)
 option(BUILD_DOCUMENTATION "Build the Doxygen documentation." ON)
 option(BUILD_TESTS         "Build the unit tests." ON)
 
