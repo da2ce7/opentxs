@@ -106,6 +106,10 @@ include_directories(SYSTEM
   ${dependency_include_dir}/simpleini/
 )
 
+if(BUILD_BTC_CRYPTO)
+include_directories(${dependency_include_dir}/bitcoin-cryptopp/)
+endif()
+
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include/opentxs/core
   ${CMAKE_BINARY_DIR}/src/core/otprotob
@@ -147,6 +151,10 @@ include_directories(SYSTEM
 )
 
 target_link_libraries(opentxs-core otprotob bigint irrxml lucre ${PROTOBUF_LIBRARY} ${OPENSSL_LIBRARIES} ${ZLIB_LIBRARY} ${OPENTXS_SYSTEM_LIBRARIES} ${keyring})
+
+if(BUILD_BTC_CRYPTO)
+target_link_libraries(bitcoin-crypto)
+endif()
 
 if(WIN32)
   add_custom_command(TARGET opentxs-core POST_BUILD

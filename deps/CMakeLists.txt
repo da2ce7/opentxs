@@ -77,3 +77,32 @@ if (NOT WIN32)
           DESTINATION ${CMAKE_INSTALL_LIBDIR}
           COMPONENT)
 endif()
+
+
+
+### Build bitcoin-crypto as static library
+
+if(BUILD_BTC_CRYPTO)
+
+set(bitcoin-crypto-sources
+  ${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto/crypto/ripemd160.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto/crypto/sha1.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto/crypto/sha2.cpp
+)
+
+set(bitcoin-crypto-headers
+  ${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto/crypto/common.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto/crypto/ripemd160.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto/crypto/sha1.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto/crypto/sha2.h
+)
+
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/bitcoin-crypto)
+
+add_library(bitcoin-crypto
+  STATIC
+  ${bitcoin-crypto-sources}
+  ${bitcoin-crypto-headers}
+)
+
+endif()
