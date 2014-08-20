@@ -29,6 +29,8 @@ option(BUILD_VERBOSE       "Verbose build output." ON)
 option(BUILD_DOCUMENTATION "Build the Doxygen documentation." ON)
 option(BUILD_TESTS         "Build the unit tests." ON)
 
+option(BUILD_CRYPTOPP      "Build crypto++" ON)
+
 option(BUILD_SHARED_LIBS   "Build shared libraries." ON)
 
 option(RPM                 "Build a RPM" OFF)
