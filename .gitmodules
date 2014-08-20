@@ -22,3 +22,6 @@
 [submodule "deps/secp256k1"]
 	path = deps/secp256k1
 	url = https://github.com/Open-Transactions/secp256k1.git
+[submodule "deps/cryptopp"]
+	path = deps/cryptopp
+	url = https://github.com/Open-Transactions/cryptopp.git
