@@ -139,11 +139,240 @@
 #include "OTStorage.hpp"
 
 #include <fstream>
+#include <memory>
 
 #include <c5/zlib.h>
+#include <c5/base64.h>
 
 namespace opentxs
 {
+
+class OTASCIIArmor::OTASCIIArmorPrivdp
+{
+private:
+    OTASCIIArmor* const backlink;
+
+    typedef CryptoPP::BufferedTransformation::BlockingInputOnly
+    errBlockingInputOnly;
+
+public:
+    explicit OTASCIIArmorPrivdp(OTASCIIArmor* const backlink)
+        : backlink(backlink)
+    {
+    }
+
+    void get_data(ot_data_t& out) const;
+    void get_decoded_data(ot_data_t& out) const;
+    void get_decompressed_data(ot_data_t& out,
+                               const bool attempt = false) const;
+
+    void compress_data(const ot_data_t& in, ot_data_t& out) const;
+    void decompress_data(const ot_data_t& in, ot_data_t& out,
+                         const bool attempt = false) const;
+
+    void encode_data(const ot_data_t& in, ot_data_t& out) const;
+    void decode_data(const ot_data_t& in, ot_data_t& out) const;
+};
+
+void OTASCIIArmor::OTASCIIArmorPrivdp::get_data(ot_data_t& out) const
+{
+
+    out.clear();
+
+    const uint32_t len = backlink->GetLength();
+
+    if (this->backlink->GetLength() < 1) return;
+
+    out.assign(reinterpret_cast<const uint8_t*>(backlink->Get()),
+               reinterpret_cast<const uint8_t*>(backlink->Get()) + len);
+
+    if (out.empty()) {
+        otErr << "String is empty" << __FUNCTION__ << "\n";
+        return;
+    }
+}
+
+void OTASCIIArmor::OTASCIIArmorPrivdp::get_decoded_data(ot_data_t& out) const
+{
+
+    out.clear();
+
+    ot_data_t data;
+    this->get_data(data);
+    if (data.empty()) return;
+
+    try
+    {
+        this->decode_data(data, data);
+    }
+    catch (const std::runtime_error&)
+    {
+        otErr << "Failed decode string in" << __FUNCTION__ << "\n";
+        return;
+    }
+
+    if (data.empty()) {
+        otErr << "Decoded string is empty" << __FUNCTION__ << "\n";
+        return;
+    }
+
+    out = data;
+}
+
+void OTASCIIArmor::OTASCIIArmorPrivdp::get_decompressed_data(
+    ot_data_t& out, const bool attempt) const
+{
+
+    out.clear();
+
+    ot_data_t data, decompressed;
+    this->get_decoded_data(data);
+    if (data.empty()) return;
+
+    try
+    {
+        this->decompress_data(data, decompressed, attempt);
+        if (decompressed.empty()) {
+            out = data;
+            return;
+        }
+    }
+    catch (const std::runtime_error&)
+    {
+        otErr << "Failed decompress string in" << __FUNCTION__ << "\n";
+        return;
+    }
+
+    if (decompressed.empty()) {
+        otErr << "Decompressed string is empty" << __FUNCTION__ << "\n";
+        return;
+    }
+
+    out = decompressed;
+}
+
+void OTASCIIArmor::OTASCIIArmorPrivdp::compress_data(const ot_data_t& in,
+                                                     ot_data_t& out) const
+{
+
+    const ot_data_t input = in;
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::ZlibCompressor zibcompressor;
+
+    try
+    {
+        zibcompressor.Initialize();
+        zibcompressor.PutMessageEnd(&input.at(0), input.size());
+        zibcompressor.Flush(1);
+    }
+    catch (errBlockingInputOnly e)
+    {
+        OT_FAIL_MSG("crypto++ failure \n");
+        throw std::exception(e);
+    }
+
+    out.resize(static_cast<size_t>(zibcompressor.TotalBytesRetrievable()));
+    out.resize(
+        zibcompressor.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
+
+void OTASCIIArmor::OTASCIIArmorPrivdp::decompress_data(const ot_data_t& in,
+                                                       ot_data_t& out,
+                                                       const bool attempt) const
+{
+
+    const ot_data_t input = in;
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::ZlibDecompressor zlibdecompressor;
+
+    try
+    {
+        zlibdecompressor.Initialize();
+        zlibdecompressor.PutMessageEnd(&input.at(0), input.size());
+        zlibdecompressor.Flush(1);
+    }
+    catch (errBlockingInputOnly e)
+    {
+        OT_FAIL_MSG("crypto++ failure \n");
+        throw std::exception(e);
+    }
+
+    catch (CryptoPP::ZlibDecompressor::Err e)
+    {
+
+        if (attempt) {
+            if (e.GetErrorType() ==
+                CryptoPP::ZlibDecompressor::Err::INVALID_DATA_FORMAT) {
+                return; // we are only trying.
+            }
+        }
+
+        otErr << __FUNCTION__ << " Error: " << e.GetWhat() << "\n";
+
+        std::string input_string(input.begin(), input.end());
+        otErr << "Input: \n --- \n" << input_string << "\n --- \n";
+
+        throw std::exception(e);
+    }
+
+    out.resize(static_cast<size_t>(zlibdecompressor.TotalBytesRetrievable()));
+    out.resize(zlibdecompressor.Get(reinterpret_cast<uint8_t*>(&out.at(0)),
+                                    out.size()));
+}
+
+void OTASCIIArmor::OTASCIIArmorPrivdp::encode_data(const ot_data_t& in,
+                                                   ot_data_t& out) const
+{
+
+    const ot_data_t input = in;
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::Base64Encoder base64Encoder;
+
+    try
+    {
+        base64Encoder.PutMessageEnd(&input.at(0), input.size());
+    }
+    catch (errBlockingInputOnly e)
+    {
+        OT_FAIL_MSG("crypto++ failure \n");
+        throw std::exception(e);
+    }
+
+    out.resize(static_cast<size_t>(base64Encoder.TotalBytesRetrievable()));
+    out.resize(
+        base64Encoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
+
+void OTASCIIArmor::OTASCIIArmorPrivdp::decode_data(const ot_data_t& in,
+                                                   ot_data_t& out) const
+{
+
+    const ot_data_t input = in;
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::Base64Decoder base64Decoder;
+
+    try
+    {
+        base64Decoder.PutMessageEnd(&input.at(0), input.size());
+    }
+    catch (errBlockingInputOnly e)
+    {
+        OT_FAIL_MSG("crypto++ failure \n");
+        throw std::exception(e);
+    }
+
+    out.resize(static_cast<size_t>(base64Decoder.TotalBytesRetrievable()));
+    out.resize(
+        base64Decoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
 
 const char* OT_BEGIN_ARMORED = "-----BEGIN OT ARMORED";
 const char* OT_END_ARMORED = "-----END OT ARMORED";
@@ -156,7 +385,7 @@ const char* OT_BEGIN_SIGNED_escaped = "- -----BEGIN SIGNED";
 
 std::unique_ptr<OTDB::OTPacker> OTASCIIArmor::s_pPacker;
 
-OTDB::OTPacker* OTASCIIArmor::GetPacker()
+OTDB::OTPacker& OTASCIIArmor::GetPacker()
 {
     if (nullptr ==
         s_pPacker) { // WARNING: Do not change OTDB_DEFAULT_PACKER below
@@ -168,7 +397,7 @@ OTDB::OTPacker* OTASCIIArmor::GetPacker()
         OT_ASSERT(nullptr != s_pPacker);
     }
 
-    return s_pPacker.get();
+    return *s_pPacker;
 }
 
 // Let's say you don't know if the input string is raw base64, or if it has
@@ -246,6 +475,7 @@ OTASCIIArmor::OTASCIIArmor(const OTData& theValue)
 // Copies (already encoded)
 OTASCIIArmor::OTASCIIArmor(const OTASCIIArmor& strValue)
     : OTString(dynamic_cast<const OTString&>(strValue))
+    , dp(new OTASCIIArmorPrivdp(this))
 {
 }
 
@@ -296,81 +526,6 @@ OTASCIIArmor& OTASCIIArmor::operator=(const OTASCIIArmor& strValue)
     return *this;
 }
 
-// Source for these two functions: http://panthema.net/2007/0328-ZLibString.html
-
-/** Compress a STL string using zlib with given compression level and return
- * the binary data. */
-
-std::string decompress_string(const std::string&);
-
-std::string compress_string(const std::string& str)
-{
-    CryptoPP::ZlibCompressor zibcompressor;
-
-    zibcompressor.Initialize();
-    zibcompressor.PutMessageEnd(reinterpret_cast<const byte*>(str.c_str()),
-                                str.length());
-
-    try
-    {
-        zibcompressor.Flush(1);
-    }
-    catch (CryptoPP::BufferedTransformation::BlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure")
-    }
-
-    const size_t buffSize = zibcompressor.TotalBytesRetrievable();
-
-    std::vector<char> outbuffer;
-    outbuffer.resize(buffSize);
-
-    const size_t realSize =
-        zibcompressor.Get(reinterpret_cast<byte*>(&outbuffer.at(0)), buffSize);
-    outbuffer.resize(realSize);
-
-    std::string outstring(outbuffer.begin(), outbuffer.end());
-
-    return outstring;
-}
-
-/** Decompress an STL string using zlib and return the original data. */
-std::string decompress_string(const std::string& str)
-{
-    std::vector<byte> inbuffer(str.begin(), str.end());
-
-    CryptoPP::ZlibDecompressor zlibdecompressor;
-
-    zlibdecompressor.Initialize();
-
-    try
-    {
-        zlibdecompressor.PutMessageEnd(&inbuffer.at(0), inbuffer.size());
-        zlibdecompressor.Flush(1);
-    }
-    catch (CryptoPP::BufferedTransformation::BlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure")
-    }
-    catch (CryptoPP::ZlibDecompressor::Err e)
-    {
-        OT_FAIL_MSG("crypto++ failure")
-    }
-
-    const size_t buffSize = zlibdecompressor.TotalBytesRetrievable();
-
-    std::vector<char> outbuffer;
-    outbuffer.resize(buffSize);
-
-    const size_t realSize = zlibdecompressor.Get(
-        reinterpret_cast<byte*>(&outbuffer.at(0)), buffSize);
-    outbuffer.resize(realSize);
-
-    std::string outstring(outbuffer.begin(), outbuffer.end());
-
-    return outstring;
-}
-
 /// if we pack, compress, encode on the way in, that means, therefore, we
 /// need to decode, uncompress, then unpack on our way out. Right?
 ///
@@ -386,24 +541,11 @@ std::string decompress_string(const std::string& str)
 bool OTASCIIArmor::GetAndUnpackString(
     OTString& strData, bool bLineBreaks) const // bLineBreaks=true
 {
-    size_t outSize = 0;
-    uint8_t* pData = nullptr;
-
     strData.Release();
+    if (GetLength() < 1) return true;
 
-    if (GetLength() < 1) {
-        return true;
-    }
-
-    pData = OTCrypto::It()->Base64Decode(Get(), &outSize, bLineBreaks);
-    //    pData = OT_base64_decode(Get(), &outSize, (bLineBreaks ? 1 : 0));
-
-    if (pData) {
-
-        std::string str_decoded(pData, pData + outSize);
-
-        delete[] pData;
-        pData = nullptr;
+    ot_data_t packed_data;
+    dp->get_decompressed_data(packed_data);
 
         std::string str_uncompressed = "";
         try {
@@ -415,46 +557,33 @@ bool OTASCIIArmor::GetAndUnpackString(
             return false;
         }
 
-        // PUT THE PACKED BUFFER HERE, AND UNPACK INTO strData
+    // PUT THE PACKED BUFFER HERE, AND UNPACK INTO strData
 
-        OTDB::OTPacker* pPacker =
-            OTASCIIArmor::GetPacker(); // No need to check for failure, since
-                                       // this already ASSERTS. No need to
-                                       // cleanup either.
+    std::unique_ptr<OTDB::PackedBuffer> pBuffer(GetPacker().CreateBuffer());
+    OT_ASSERT(nullptr != pBuffer);
 
-        std::unique_ptr<OTDB::PackedBuffer> pBuffer(pPacker->CreateBuffer());
-        OT_ASSERT(nullptr != pBuffer);
+    pBuffer->SetData(&packed_data.at(0), packed_data.size());
 
-        pBuffer->SetData(
-            reinterpret_cast<const uint8_t*>(str_uncompressed.data()),
-            str_uncompressed.size());
+    std::unique_ptr<OTDB::OTDBString> pOTDBString(
+        dynamic_cast<OTDB::OTDBString*>(
+            OTDB::CreateObject(OTDB::STORED_OBJ_STRING)));
+    OT_ASSERT(nullptr != pOTDBString);
 
-        std::unique_ptr<OTDB::OTDBString> pOTDBString(
-            dynamic_cast<OTDB::OTDBString*>(
-                OTDB::CreateObject(OTDB::STORED_OBJ_STRING)));
-        OT_ASSERT(nullptr != pOTDBString);
+    const bool bUnpacked = GetPacker().Unpack(*pBuffer, *pOTDBString);
 
-        bool bUnpacked = pPacker->Unpack(*pBuffer, *pOTDBString);
-
-        if (false == bUnpacked) {
-            otErr << "Failed unpacking string in "
-                     "OTASCIIArmor::GetAndUnpackString.\n";
-
-            return false;
-        }
-
-        // This enforces the null termination. (using the 2nd parameter as
-        // nEnforcedMaxLength)
-        strData.Set(pOTDBString->m_string.c_str(),
-                    static_cast<uint32_t>(pOTDBString->m_string.length()));
-
-        return true;
-    }
-    else {
-        otErr << "OTASCIIArmor::GetAndUnpackString: nullptr pData while "
-                 "base64-decoding pData.\n";
+    if (false == bUnpacked) {
+        otErr << "Failed unpacking string in " << __FUNCTION__ << "\n";
         return false;
     }
+
+    const std::vector<char> output(pOTDBString->m_string.begin(),
+                                   pOTDBString->m_string.end());
+
+    // This enforces the null termination. (using the 2nd parameter as
+    // nEnforcedMaxLength)
+    strData.Set(&output.at(0), output.size());
+
+    return true;
 }
 
 // If adding packing STILL didn't make us binary compatible, then I need to try
@@ -484,56 +613,32 @@ bool OTASCIIArmor::GetStringMap(std::map<std::string, std::string>& the_map,
 bool OTASCIIArmor::GetAndUnpackStringMap(
     std::map<std::string, std::string>& the_map, bool bLineBreaks) const
 {
-    size_t outSize = 0;
-    uint8_t* pData = nullptr;
-
     the_map.clear();
-
     if (GetLength() < 1) return true;
 
-    pData = OTCrypto::It()->Base64Decode(Get(), &outSize, bLineBreaks);
+    ot_data_t packed_data;
+    dp->get_decompressed_data(packed_data, true);
+    OT_ASSERT(packed_data.empty());
 
-    if (pData) {
+    std::unique_ptr<OTDB::PackedBuffer> pBuffer(GetPacker().CreateBuffer());
+    OT_ASSERT(nullptr != pBuffer);
 
-        OTDB::OTPacker* pPacker =
-            OTASCIIArmor::GetPacker(); // No need to check for failure, since
-                                       // this already ASSERTS. No need to
-                                       // cleanup either.
+    pBuffer->SetData(&packed_data.at(0), packed_data.size());
 
-        std::unique_ptr<OTDB::PackedBuffer> pBuffer(
-            pPacker->CreateBuffer()); // Need to clean this up.
-        OT_ASSERT(nullptr != pBuffer);
+    std::unique_ptr<OTDB::StringMap> pStringMap(dynamic_cast<OTDB::StringMap*>(
+        OTDB::CreateObject(OTDB::STORED_OBJ_STRING_MAP)));
+    OT_ASSERT(nullptr != pStringMap);
 
-        pBuffer->SetData(static_cast<const uint8_t*>(pData), outSize);
-        delete[] pData;
-        pData = nullptr;
+    bool bUnpacked = GetPacker().Unpack(*pBuffer, *pStringMap);
 
-        std::unique_ptr<OTDB::StringMap> pStringMap(
-            dynamic_cast<OTDB::StringMap*>(
-                OTDB::CreateObject(OTDB::STORED_OBJ_STRING_MAP)));
-        OT_ASSERT(nullptr != pStringMap);
-
-        bool bUnpacked = pPacker->Unpack(*pBuffer, *pStringMap);
-
-        if (false == bUnpacked) {
-            otErr << "Failed unpacking data in "
-                     "OTASCIIArmor::GetAndUnpackStringMap.\n";
-            delete[] pData;
-            pData = nullptr;
-            return false;
-        }
-
-        the_map = pStringMap->the_map;
-
-        delete[] pData;
-        pData = nullptr;
-        return true;
-    }
-    else {
-        otErr << "Error while base64_decoding in "
+    if (false == bUnpacked) {
+        otErr << "Failed unpacking data in "
                  "OTASCIIArmor::GetAndUnpackStringMap.\n";
         return false;
     }
+
+    the_map = pStringMap->the_map;
+    return true;
 }
 
 bool OTASCIIArmor::SetStringMap(
@@ -545,16 +650,8 @@ bool OTASCIIArmor::SetStringMap(
 bool OTASCIIArmor::SetAndPackStringMap(
     const std::map<std::string, std::string>& the_map, bool bLineBreaks)
 {
-    char* pString = nullptr;
-
-    Release();
-
-    if (the_map.empty()) return true;
-
-    OTDB::OTPacker* pPacker =
-        OTASCIIArmor::GetPacker(); // No need to check for failure, since this
-                                   // already ASSERTS. No need to cleanup
-                                   // either.
+    this->Release();
+    if (the_map.size() < 1) return true;
 
     // Here I use the default storage context to create the object (the string
     // map.)
@@ -562,48 +659,42 @@ bool OTASCIIArmor::SetAndPackStringMap(
     // OTDB_DEFAULT_PACKER,
     // so I know everything is compatible.
     //
+
     std::unique_ptr<OTDB::StringMap> pStringMap(dynamic_cast<OTDB::StringMap*>(
         OTDB::CreateObject(OTDB::STORED_OBJ_STRING_MAP)));
-
-    OT_ASSERT(nullptr !=
-              pStringMap); // Beyond this point, responsible to delete
-                           // pStringMap.
+    OT_ASSERT(nullptr != pStringMap);
 
     pStringMap->the_map = the_map;
 
-    std::unique_ptr<OTDB::PackedBuffer> pBuffer(pPacker->Pack(
-        *pStringMap)); // Now we PACK our data before compressing/encoding it.
+    // Now we PACK our data before compressing/encoding it.
+    std::unique_ptr<OTDB::PackedBuffer> pBuffer(GetPacker().Pack(*pStringMap));
 
     if (nullptr == pBuffer) {
-        otErr << "Failed packing data in OTASCIIArmor::SetAndPackStringMap. \n";
+        otErr << "Failed packing data in" << __FUNCTION__ << "\n";
         return false;
     }
 
-    const uint8_t* pUint = static_cast<const uint8_t*>(pBuffer->GetData());
-    const size_t theSize = pBuffer->GetSize();
+    ot_data_t packed_data(pBuffer->GetData(),
+                          pBuffer->GetData() + pBuffer->GetSize());
 
-    if (nullptr != pUint)
-        pString = OTCrypto::It()->Base64Encode(
-            pUint, static_cast<int32_t>(theSize), bLineBreaks);
-    //        pString = OT_base64_encode(pUint, static_cast<int32_t> (theSize),
-    // (bLineBreaks ? 1 : 0));
-    else {
-        otErr << "Error while base64_encoding in "
-                 "OTASCIIArmor::SetAndPackStringMap.\n";
+    if (packed_data.empty()) {
+        otErr << "Error while base64_encoding in " << __FUNCTION__ << "\n";
         return false;
     }
 
-    if (nullptr != pString) {
-        Set(pString);
-        delete[] pString;
-        pString = nullptr;
-        return true;
-    }
-    else {
-        otErr << "Error while base64_encoding in "
-                 "OTASCIIArmor::SetAndPackStringMap.\n";
+    ot_data_t encoded_data;
+
+    this->dp->encode_data(packed_data, encoded_data);
+
+    if (encoded_data.empty()) {
+        otErr << "Error while base64_encoding in " << __FUNCTION__ << "\n";
         return false;
     }
+
+    this->Set(reinterpret_cast<const char*>(&encoded_data.at(0)),
+              encoded_data.size());
+
+    return true;
 }
 
 // This function will base64 DECODE the string contents
@@ -616,60 +707,37 @@ bool OTASCIIArmor::GetData(OTData& theData,
 
 // This function will base64 DECODE the string contents
 // and return them as binary in theData
-// Additionally it will decompress and unpack the data!
 //
 bool OTASCIIArmor::GetAndUnpackData(OTData& theData,
                                     bool bLineBreaks) const // linebreaks=true
 {
-    size_t outSize = 0;
-    uint8_t* pData = nullptr;
-
     theData.Release();
-
     if (GetLength() < 1) return true;
 
-    pData = OTCrypto::It()->Base64Decode(Get(), &outSize, bLineBreaks);
-    //    pData = OT_base64_decode(Get(), &outSize, (bLineBreaks ? 1 : 0));
+    ot_data_t packed_data;
+    dp->get_decompressed_data(packed_data, true);
+    OT_ASSERT(!packed_data.empty());
 
-    if (pData) {
+    std::unique_ptr<OTDB::PackedBuffer> pBuffer(GetPacker().CreateBuffer());
+    OT_ASSERT(nullptr != pBuffer);
 
-        OTDB::OTPacker* pPacker =
-            OTASCIIArmor::GetPacker(); // No need to check for failure, since
-                                       // this already ASSERTS. No need to
-                                       // cleanup either.
+    pBuffer->SetData(&packed_data[0], packed_data.size());
 
-        std::unique_ptr<OTDB::PackedBuffer> pBuffer(pPacker->CreateBuffer());
-        OT_ASSERT(nullptr != pBuffer);
+    std::unique_ptr<OTDB::Blob> pBlob(
+        dynamic_cast<OTDB::Blob*>(OTDB::CreateObject(OTDB::STORED_OBJ_BLOB)));
+    OT_ASSERT(nullptr != pBlob);
 
-        pBuffer->SetData(static_cast<const uint8_t*>(pData), outSize);
-        delete[] pData;
-        pData = nullptr;
+    bool bUnpacked = GetPacker().Unpack(*pBuffer, *pBlob);
 
-        std::unique_ptr<OTDB::Blob> pBlob(dynamic_cast<OTDB::Blob*>(
-            OTDB::CreateObject(OTDB::STORED_OBJ_BLOB)));
-        OT_ASSERT(nullptr != pBlob);
-
-        bool bUnpacked = pPacker->Unpack(*pBuffer, *pBlob);
-
-        if (false == bUnpacked) {
-            otErr
-                << "Failed unpacking data in OTASCIIArmor::GetAndUnpackData.\n";
-            delete[] pData;
-            pData = nullptr;
-            return false;
-        }
-
-        theData.Assign(pBlob->m_memBuffer.data(),
-                       static_cast<uint32_t>(pBlob->m_memBuffer.size()));
-        delete[] pData;
-        pData = nullptr;
-        return true;
-    }
-    else {
-        otErr << "Error while base64_decoding in "
-                 "OTASCIIArmor::GetAndUnpackData.\n";
+    if (false == bUnpacked) {
+        otErr << "Failed unpacking data in " << __FUNCTION__ << "\n";
         return false;
     }
+
+    theData.Assign(pBlob->m_memBuffer.data(),
+                   static_cast<uint32_t>(pBlob->m_memBuffer.size()));
+
+    return true;
 }
 
 // This function will base64 ENCODE theData,
@@ -685,16 +753,8 @@ bool OTASCIIArmor::SetData(const OTData& theData, bool bLineBreaks)
 //
 bool OTASCIIArmor::SetAndPackData(const OTData& theData, bool bLineBreaks)
 {
-    char* pString = nullptr;
-
-    Release();
-
+    this->Release();
     if (theData.GetSize() < 1) return true;
-
-    OTDB::OTPacker* pPacker =
-        OTASCIIArmor::GetPacker(); // No need to check for failure, since this
-                                   // already ASSERTS. No need to cleanup
-                                   // either.
 
     // Here I use the default storage context to create the object (the blob.)
     // I also originally created OTASCIIArmor::GetPacker() using
@@ -703,15 +763,13 @@ bool OTASCIIArmor::SetAndPackData(const OTData& theData, bool bLineBreaks)
     //
     std::unique_ptr<OTDB::Blob> pBlob(
         dynamic_cast<OTDB::Blob*>(OTDB::CreateObject(OTDB::STORED_OBJ_BLOB)));
-
-    OT_ASSERT(nullptr !=
-              pBlob); // Beyond this point, responsible to delete pBlob.
+    OT_ASSERT(nullptr != pBlob);
 
     pBlob->m_memBuffer.assign(
         static_cast<const uint8_t*>(theData.GetPointer()),
         static_cast<const uint8_t*>(theData.GetPointer()) + theData.GetSize());
 
-    std::unique_ptr<OTDB::PackedBuffer> pBuffer(pPacker->Pack(
+    std::unique_ptr<OTDB::PackedBuffer> pBuffer(GetPacker().Pack(
         *pBlob)); // Now we PACK our data before compressing/encoding it.
 
     if (nullptr == pBuffer) {
@@ -719,31 +777,21 @@ bool OTASCIIArmor::SetAndPackData(const OTData& theData, bool bLineBreaks)
         return false;
     }
 
-    const uint8_t* pUint = static_cast<const uint8_t*>(pBuffer->GetData());
-    const size_t theSize = pBuffer->GetSize();
+    const ot_data_t packed_data(pBuffer->GetData(),
+                                pBuffer->GetData() + pBuffer->GetSize());
+    ot_data_t encoded_data;
 
-    if (nullptr != pUint)
-        pString = OTCrypto::It()->Base64Encode(
-            pUint, static_cast<int32_t>(theSize), bLineBreaks);
-    //        pString = OT_base64_encode(pUint, static_cast<int32_t> (theSize),
-    // (bLineBreaks ? 1 : 0));
-    else {
-        otErr
-            << "Error while base64_encoding in OTASCIIArmor::SetAndPackData.\n";
+    this->dp->encode_data(packed_data, encoded_data);
+
+    if (encoded_data.empty()) {
+        otErr << "Error while base64_encoding in " << __FUNCTION__ << "\n";
         return false;
     }
 
-    if (nullptr != pString) {
-        Set(pString);
-        delete[] pString;
-        pString = nullptr;
-        return true;
-    }
-    else {
-        otErr
-            << "Error while base64_encoding in OTASCIIArmor::SetAndPackData.\n";
-        return false;
-    }
+    this->Set(reinterpret_cast<const char*>(&encoded_data.at(0)),
+              encoded_data.size());
+
+    return true;
 }
 
 /// This function first Packs the incoming string, using whatever is the default
@@ -760,14 +808,8 @@ bool OTASCIIArmor::SetAndPackData(const OTData& theData, bool bLineBreaks)
 bool OTASCIIArmor::SetAndPackString(const OTString& strData,
                                     bool bLineBreaks) //=true
 {
-    Release();
-
+    this->Release();
     if (strData.GetLength() < 1) return true;
-
-    OTDB::OTPacker* pPacker =
-        OTASCIIArmor::GetPacker(); // No need to check for failure, since this
-                                   // already ASSERTS. No need to cleanup
-                                   // either.
 
     // Here I use the default storage context to create the object (the blob.)
     // I also originally created OTASCIIArmor::GetPacker() using
@@ -780,52 +822,36 @@ bool OTASCIIArmor::SetAndPackString(const OTString& strData,
 
     OT_ASSERT(nullptr != pOTDBString);
 
-    const uint32_t theStringSize32 = strData.GetLength();
-    const size_t theStringSize =
-        theStringSize32; // might need a cast here. // todo make sure this will
-                         // handle sizes as big as I need.
+    pOTDBString->m_string.assign(strData.Get(),
+                                 strData.Get() + strData.GetLength());
 
-    pOTDBString->m_string.assign(strData.Get(), // const char *
-                                 theStringSize);
-
-    std::unique_ptr<OTDB::PackedBuffer> pBuffer(
-        pPacker->Pack(*pOTDBString)); // Now we PACK our string before
-                                      // compressing/encoding it.
+    std::unique_ptr<OTDB::PackedBuffer> pBuffer(GetPacker().Pack(*pOTDBString));
+    // Now we PACK our string before compressing/encoding it.
 
     if (nullptr == pBuffer) {
-        otErr << "Failed packing string in OTASCIIArmor::SetAndPackString. \n";
+        otErr << "Failed packing string in " << __FUNCTION__ << "\n";
         return false;
     }
 
-    std::string str_packed(reinterpret_cast<const char*>(pBuffer->GetData()),
-                           pBuffer->GetSize());
+    const ot_data_t packed_data(pBuffer->GetData(),
+                                pBuffer->GetData() + pBuffer->GetSize());
+    ot_data_t encoded_data;
+    ot_data_t compressed_data;
 
-    std::string str_compressed = compress_string(str_packed);
-
-    // Success
-    if (str_compressed.size()) {
-        // Now let's base-64 encode it...
-        // TODO: remove static cast, add check for longer than 'int32_t' length?
-        // (da2ce7)
-        char* pString = OTCrypto::It()->Base64Encode(
-            (const uint8_t*)(str_compressed.data()),
-            static_cast<int32_t>(str_compressed.size()), bLineBreaks);
-
-        if (pString) {
-            Set(pString);
-            delete[] pString;
-            pString = nullptr;
-            return true;
-        }
-        else {
-            otErr << "OTASCIIArmor::" << __FUNCTION__ << ": pString nullptr.\n";
-        }
-    }
-    else {
-        otErr << "OTASCIIArmor::" << __FUNCTION__ << ": nDestLen 0.\n";
+    this->dp->compress_data(packed_data, compressed_data);
+    if (compressed_data.empty()) {
+        return false;
     }
 
-    return false;
+    this->dp->encode_data(compressed_data, encoded_data);
+    if (encoded_data.empty()) {
+        return false;
+    }
+
+    this->Set(reinterpret_cast<const char*>(&encoded_data.at(0)),
+              encoded_data.size());
+
+    return true;
 }
 
 // This version is fully functional, and performs compression in addition to
@@ -833,7 +859,6 @@ bool OTASCIIArmor::SetAndPackString(const OTString& strData,
 //
 bool OTASCIIArmor::SetString(const OTString& strData, bool bLineBreaks) //=true
 {
-
     return SetAndPackString(strData, bLineBreaks);
 }
 

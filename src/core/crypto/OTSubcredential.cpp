@@ -155,6 +155,9 @@
 
 #include <irrxml/irrXML.hpp>
 
+#include <vector>
+#include <map>
+
 // Contains 3 key pairs: signing, authentication, and encryption.
 // This is stored as an OTContract, and it must be signed by the
 // master key. (which is also an OTSubcredential.)
@@ -770,6 +773,33 @@ const OTString& OTSubcredential::GetPriCredential() const
                                              "subcredentials.");
 
     return m_strRawFile;
+}
+
+OTSubcredential::data_mapt_t OTSubcredential::GetPublicMapRaw() const
+{
+
+    data_mapt_t pubMapRaw;
+
+    for (auto a : m_mapPublicInfo) {
+
+        const std::string name(a.first);
+        const std::string key(a.second);
+
+        OTASCIIArmor armorKey;
+
+        auto str(OTString(key.c_str()));
+        armorKey.LoadFromString(str); // pass by referece
+
+        OTData data;
+        armorKey.GetAndUnpackData(data);
+
+        const uint8_t* dataPtr(static_cast<const uint8_t*>(data.GetPointer()));
+
+        const ot_data_t d(dataPtr, dataPtr + data.GetSize());
+        pubMapRaw.insert(data_pair_t(name, (d)));
+    }
+
+    return pubMapRaw;
 }
 
 // We don't want to have to figure this out each time we need the public

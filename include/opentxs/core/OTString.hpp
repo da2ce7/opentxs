@@ -141,6 +141,8 @@
 #include <list>
 #include <map>
 #include <sstream>
+#include <vector>
+
 #include <cstdarg>
 #include <cstring>
 
@@ -155,9 +157,14 @@ class OTIdentifier;
 class OTPseudonym;
 class OTSignature;
 
+// global
+typedef std::vector<uint8_t> ot_data_t;
+typedef std::vector<const uint8_t> ot_const_data_t; // write only
+
 class OTString
 {
 public:
+    typedef std::vector<const uint8_t> data_t;
     typedef std::list<std::string> List;
     typedef std::map<std::string, std::string> Map;
 

@@ -297,7 +297,7 @@ bool OTSubkey::VerifySignedByMaster()
         }
 
         if (GetPublicMap().size() > 0 &&
-            GetPublicMap() != masterKey.GetPublicMap()) {
+            GetPublicMapRaw() != masterKey.GetPublicMapRaw()) {
             OTLog::vOutput(0, "%s: Failure, public info of this key credential "
                               "doesn't match public info of master-signed "
                               "version of this key credential.\n",

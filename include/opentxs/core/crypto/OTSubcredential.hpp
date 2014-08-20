@@ -135,6 +135,9 @@
 
 #include "../OTContract.hpp"
 
+#include <vector>
+#include <map>
+
 // A nym contains a list of master credentials, via OTCredential.
 // The whole purpose of a Nym is to be an identity, which can have
 // master credentials.
@@ -184,6 +187,11 @@ class OTString;
 //
 class OTSubcredential : public OTContract
 {
+public:
+    typedef std::map<const std::string, const std::vector<uint8_t>> data_mapt_t;
+    typedef std::pair<const std::string, const std::vector<uint8_t>>
+    data_pair_t;
+
 private: // Private prevents erroneous use by other classes.
     typedef OTContract ot_super;
     friend class OTCredential;
@@ -273,6 +281,9 @@ public:
     {
         return m_mapPublicInfo;
     }
+
+    data_mapt_t GetPublicMapRaw() const;
+
     const OTString::Map& GetPrivateMap() const
     {
         return m_mapPrivateInfo;
