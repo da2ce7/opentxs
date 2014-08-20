@@ -135,7 +135,12 @@
 
 #include "../OTString.hpp"
 
+#include <string>
+#include <iostream>
+#include <fstream>
+#include <cinttypes>
 #include <memory>
+#include <map>
 
 namespace opentxs
 {

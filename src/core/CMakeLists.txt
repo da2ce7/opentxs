@@ -96,8 +96,12 @@ endif()
 include_directories(SYSTEM
   ${OPENSSL_INCLUDE_DIR}
   ${PROTOBUF_INCLUDE_DIR}
-  ${ZLIB_INCLUDE_DIRS}
 )
+
+if(BUILD_ZLIB)
+  include_directories(SYSTEM ${ZLIB_INCLUDE_DIRS})
+endif()
+
 
 set(MODULE_NAME opentxs-core)
 if(WIN32)

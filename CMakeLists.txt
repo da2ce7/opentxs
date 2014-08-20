@@ -29,6 +29,7 @@ option(BUILD_DOCUMENTATION "Build the Doxygen documentation." ON)
 option(BUILD_TESTS         "Build the unit tests." ON)
 
 option(BUILD_CRYPTOPP      "Build crypto++" ON)
+option(BUILD_ZLIB          "Build zlib" OFF)
 
 option(BUILD_SHARED_LIBS   "Build shared libraries." ON)
 
@@ -147,7 +148,9 @@ message(STATUS "C++ link flags:  ${CMAKE_CXX_LINK_FLAGS}")
 
 find_package(OpenSSL REQUIRED)
 find_package(Protobuf REQUIRED)
-find_package(ZLIB REQUIRED)
+if(BUILD_ZLIB)
+  find_package(ZLIB REQUIRED)
+endif(BUILD_ZLIB)
 find_library(ZMQ_LIB NAMES zmq libzmq-v120-mt-gd-4_0_4)
 if (ZMQ_LIB STREQUAL "ZMQ_LIB-NOTFOUND")
   set(ZMQ_LIB_FOUND 0)
