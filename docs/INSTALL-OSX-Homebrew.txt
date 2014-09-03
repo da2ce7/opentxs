@@ -67,7 +67,7 @@ $ git clean -fxd && git submodule foreach git clean -fxd
 $ git reset --hard HEAD && git submodule foreach git reset --hard HEAD
 
 $ mkdir -p build; cd build
-$ cmake .. -DCMAKE_PREFIX_PATH=/usr/local/opt/openssl
+$ cmake ..
 $ make -j2
 
 $ make install
