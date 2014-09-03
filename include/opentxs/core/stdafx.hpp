@@ -46,6 +46,11 @@
 #define OT_CRYPTO_USING_OPENSSL 1
 #endif
 
+//
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+#define OT_CRYPTO_PREFER_CRYPTOPP 1
+#endif
+
 #ifndef OT_CASH_USING_LUCRE
 #define OT_CASH_USING_LUCRE 1
 #endif

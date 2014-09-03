@@ -141,6 +141,11 @@
 #include <fstream>
 #include <memory>
 
+// will remove later, with lots of testing.
+#define CRYPTOPP_DISABLE_ASM
+#define CRYPTOPP_DISABLE_SSSE3
+#define CRYPTOPP_DISABLE_AESNI
+
 #include <c5/zlib.h>
 #include <c5/base64.h>
 

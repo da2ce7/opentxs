@@ -294,6 +294,7 @@ const OTString OTIdentifier::HashAlgorithm2("WHIRLPOOL");
 // This method implements the SAMY hash
 bool OTIdentifier::CalculateDigest(const OTString& strInput)
 {
+
     //#ifndef ANDROID // If NOT Android...
     OTIdentifier idSecondHash;
 

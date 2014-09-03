@@ -407,13 +407,15 @@ class OTCrypto_OpenSSL : public OTCrypto
 {
     friend class OTCrypto;
 
+    class OTCrypto_CryptoPP;
+
 protected:
     OTCrypto_OpenSSL();
     virtual void Init_Override() const;
     virtual void Cleanup_Override() const;
 
     class OTCrypto_OpenSSLdp;
-    OTCrypto_OpenSSLdp* dp;
+    OTCrypto_OpenSSLdp* dp_openssl;
 
 public:
     static std::mutex* s_arrayMutex;
