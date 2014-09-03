@@ -145,6 +145,10 @@
 #include "crypto/OpenSSL_BIO.hpp"
 #endif
 
+#ifdef __APPLE__
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 namespace opentxs
 {
 

@@ -1997,8 +1997,8 @@ void OTCrypto_OpenSSL::Init_Override() const
  For backward compatibility, SSLEAY_VERSION_NUMBER is also defined.
 
  */
-#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER - 0 < 0x10000000L
-    OT_FAIL_MSG("ASSERT: Must use OpenSSL version 1.0.0 or higher.\n");
+#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER - 0 < 0x0090819fL
+    OT_FAIL_MSG("ASSERT: Must use OpenSSL version OpenSSL 0.9.8y or higher.\n");
 #endif
 
 /* Todo FYI:

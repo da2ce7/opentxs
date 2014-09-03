@@ -32,6 +32,10 @@ extern "C" {
 }
 #endif
 
+#ifdef __APPLE__
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

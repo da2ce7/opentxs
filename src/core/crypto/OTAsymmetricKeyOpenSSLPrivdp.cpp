@@ -146,6 +146,10 @@
 
 #include "util/stacktrace.h"
 
+#ifdef __APPLE__
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 namespace opentxs
 {
 
