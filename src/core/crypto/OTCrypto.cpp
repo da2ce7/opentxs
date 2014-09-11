@@ -171,6 +171,11 @@ extern "C" {
 #include <c5/sha.h>
 #include <c5/whrlpool.h>
 
+#include <c5/hmac.h>
+#include <c5/pwdbased.h>
+
+#include <c5/rsa.h>
+
 #endif
 
 #if defined(OT_CRYPTO_USING_OPENSSL)
@@ -274,6 +279,12 @@ public:
     static void hash_whirlpool256(const ot_data_t& in, ot_array_32_t& out);
 
     static void hash_samy(const ot_data_t& in, ot_array_32_t& out);
+
+    static void hmac_sha1(const ot_data_t& in, ot_data_t& out);
+    static void pkcs5_pbkdf2_hmac_sha1(const ot_data_t& in,
+                                       const ot_data_t& salt,
+                                       const uint32_t uIterations,
+                                       ot_data_t& out);
 };
 
 // static
@@ -343,6 +354,28 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_samy(const ot_data_t& in,
 
     CryptoPP::xorbuf(&out.at(0), dgst_sha256.data(), dgst_whirlpool.data(),
                      out.size());
+}
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hmac_sha1(const ot_data_t& in,
+                                                    ot_data_t& out)
+{
+    CryptoPP::HMAC<CryptoPP::SHA1> hmac;
+
+    hmac.SetKey(&in.at(0), in.size());
+
+    hmac.TruncatedFinal(&out.at(0), out.size());
+}
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
+    const ot_data_t& in, const ot_data_t& salt, const uint32_t uIterations,
+    ot_data_t& out)
+{
+    CryptoPP::PKCS5_PBKDF2_HMAC<CryptoPP::SHA1> pkcs5;
+
+    pkcs5.DeriveKey(&out.at(0), out.size(), 0, &in.at(0), in.size(),
+                    &salt.at(0), salt.size(), uIterations);
 }
 
 #endif
@@ -1631,6 +1664,9 @@ OTPassword* OTCrypto_OpenSSL::DeriveKey(
                                           tempPayload);
 }
 
+
+// dataCheckHash will be set if empty.
+// return nullptr if checkHash existed but didn't match.
 OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
                                            const OTPayload& dataSalt,
                                            uint32_t uIterations,
@@ -1645,74 +1681,80 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
 
     OTPassword* pDerivedKey(InstantiateBinarySecret()); // already asserts.
 
-    //  pDerivedKey MUST be returned or cleaned-up, below this point.
-    //
-    // Key derivation in OpenSSL.
-    //
-    // int32_t PKCS5_PBKDF2_HMAC_SHA1(const char*, int32_t, const uint8_t*,
-    // int32_t, int32_t, int32_t, uint8_t*)
-    //
-    PKCS5_PBKDF2_HMAC_SHA1(
-        reinterpret_cast<const char*> // If is password... supply password,
-                                      // otherwise supply memory.
-        (userPassword.isPassword() ? userPassword.getPassword_uint8()
-                                   : userPassword.getMemory_uint8()),
-        static_cast<const int32_t>(
-            userPassword.isPassword()
-                ? userPassword.getPasswordSize()
-                : userPassword.getMemorySize()), // Password Length
-        static_cast<const uint8_t*>(dataSalt.GetPayloadPointer()), // Salt Data
-        static_cast<const int32_t>(dataSalt.GetSize()), // Salt Length
-        static_cast<const int32_t>(uIterations),        // Number Of Iterations
-        static_cast<const int32_t>(
-            pDerivedKey->getMemorySize()), // Output Length
-        static_cast<uint8_t*>(
-            pDerivedKey->getMemoryWritable()) // Output Key (not const!)
-        );
+    ot_data_t output_key(16), check_key(16);
+    {
+        ot_data_t salt;
+        {
+            auto salt_pair = std::make_pair<const uint8_t*, size_t>(
+                static_cast<const uint8_t*>(dataSalt.GetPayloadPointer()),
+                dataSalt.GetSize());
 
-    // For The HashCheck
-    bool bHaveCheckHash = !dataCheckHash.IsEmpty();
+            salt.assign(salt_pair.first, salt_pair.first + salt_pair.second);
+        }
+        {
+            ot_data_t password;
+            {
+                auto password_pair = std::make_pair<const uint8_t*, size_t>(
+                    static_cast<const uint8_t*>(
+                        userPassword.isPassword()
+                            ? userPassword.getPassword_uint8()
+                            : userPassword.getMemory_uint8()),
+                    userPassword.isPassword() ? userPassword.getPasswordSize()
+                                              : userPassword.getMemorySize());
 
-    OTPayload tmpHashCheck;
-    tmpHashCheck.SetPayloadSize(OTCryptoConfig::SymmetricKeySize());
+                password.assign(password_pair.first,
+                                password_pair.first + password_pair.second);
+            }
 
-    // We take the DerivedKey, and hash it again, then get a 'hash-check'
-    // Compare that with the supplied one, (if there is one).
-    // If there isn't one, we return the
+            // first: Derive Key
+            OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
+                password, salt, uIterations, output_key);
 
-    PKCS5_PBKDF2_HMAC_SHA1(
-        reinterpret_cast<const char*>(pDerivedKey->getMemory()), // Derived Key
-        static_cast<const int32_t>(
-            pDerivedKey->getMemorySize()), // Password Length
-        static_cast<const uint8_t*>(dataSalt.GetPayloadPointer()), // Salt Data
-        static_cast<const int32_t>(dataSalt.GetSize()), // Salt Length
-        static_cast<const int32_t>(uIterations),        // Number Of Iterations
-        static_cast<const int32_t>(tmpHashCheck.GetSize()), // Output Length
-        const_cast<uint8_t*>(static_cast<const uint8_t*>(
-            tmpHashCheck.GetPayloadPointer()))) // Output Key (not const!)
-        ;
+            std::fill(password.begin(), password.end(), '/0');
+            password.clear();
+        }
 
-    if (bHaveCheckHash) {
-        OTString strDataCheck, strTestCheck;
-        strDataCheck.Set(
-            static_cast<const char*>(dataCheckHash.GetPayloadPointer()),
-            dataCheckHash.GetSize());
-        strTestCheck.Set(
-            static_cast<const char*>(tmpHashCheck.GetPayloadPointer()),
-            tmpHashCheck.GetSize());
+        // second: Derive Checksum
+        OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
+            output_key, salt, uIterations, check_key);
 
-        if (!strDataCheck.Compare(strTestCheck)) {
-            dataCheckHash.reset();
-            dataCheckHash = tmpHashCheck;
-            return nullptr; // failure (but we will return the dataCheckHash we
-                            // got
-                            // anyway)
+        std::fill(salt.begin(), salt.end(), '/0');
+        salt.clear();
+    }
+
+    // check checksum
+    if (dataCheckHash.IsEmpty())
+    {
+        dataCheckHash.Assign(check_key.data(), check_key.size());
+    }
+    else
+    {
+        ot_data_t checksum;
+        {
+            auto check_pair = std::make_pair<const uint8_t*, size_t>(
+                static_cast<const uint8_t*>(dataCheckHash.GetPayloadPointer()),
+                dataCheckHash.GetSize());
+
+            checksum.assign(check_pair.first,
+                check_pair.first + check_pair.second);
+        }
+
+        // if longer, will have value initialization of uint8_t: zero.
+        checksum.resize(check_key.size());
+
+        if (checksum != check_key) // fail!
+        {
+            delete pDerivedKey;
+            pDerivedKey = nullptr;
+            return pDerivedKey;
         }
     }
-    else {
-        dataCheckHash.reset();
-        dataCheckHash = tmpHashCheck;
-    }
+
+    std::copy(output_key.begin(), output_key.end(),
+        static_cast<uint8_t*>(pDerivedKey->getMemoryWritable()));
+
+    std::fill(output_key.begin(), output_key.end(), '/0');
+    output_key.clear();
 
     return pDerivedKey;
 }
