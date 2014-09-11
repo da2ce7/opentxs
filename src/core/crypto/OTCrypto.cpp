@@ -168,6 +168,10 @@ extern "C" {
 #define CRYPTOPP_DISABLE_SSSE3
 #define CRYPTOPP_DISABLE_AESNI
 
+#include <c5/zlib.h>
+#include <c5/basecode.h>
+#include <c5/base64.h>
+
 #include <c5/sha.h>
 #include <c5/whrlpool.h>
 
@@ -267,7 +271,22 @@ public:
 
 class OTCrypto_OpenSSL::OTCrypto_CryptoPP
 {
+
 public:
+
+    typedef CryptoPP::BufferedTransformation::BlockingInputOnly
+        errBlockingInputOnly;
+
+
+
+    static void compress_data_zlib(const ot_data_t& in, ot_data_t& out);
+    static void decompress_data_zlib(const ot_data_t& in, ot_data_t& out,
+        const bool attempt = false);
+
+    static void encode_data_base64(const ot_data_t& in, ot_data_t& out);
+    static void decode_data_base64(const ot_data_t& in, ot_data_t& out);
+
+
     typedef std::function<void(const ot_data_t& in, ot_array_32_t& out)>
     hash256_function;
 
@@ -287,9 +306,121 @@ public:
                                        ot_data_t& out);
 };
 
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::compress_data_zlib(const ot_data_t& in,
+    ot_data_t& out)
+{
+
+    const ot_data_t input = in;
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::ZlibCompressor zibcompressor;
+
+    zibcompressor.Initialize();
+    zibcompressor.PutMessageEnd(&input.at(0), input.size());
+    zibcompressor.Flush(1);
+
+    out.resize(static_cast<size_t>(zibcompressor.TotalBytesRetrievable()));
+    out.resize(
+        zibcompressor.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decompress_data_zlib(const ot_data_t& in,
+    ot_data_t& out,
+    const bool attempt)
+{
+
+    const ot_data_t input = in;
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::ZlibDecompressor zlibdecompressor;
+
+    try
+    {
+        zlibdecompressor.Initialize();
+        zlibdecompressor.PutMessageEnd(&input.at(0), input.size());
+        zlibdecompressor.Flush(1);
+    }
+    catch (errBlockingInputOnly e)
+    {
+        OT_FAIL_MSG("crypto++ failure \n");
+        throw std::exception(e);
+    }
+
+    catch (CryptoPP::ZlibDecompressor::Err e)
+    {
+
+        if (attempt) {
+            if (e.GetErrorType() ==
+                CryptoPP::ZlibDecompressor::Err::INVALID_DATA_FORMAT) {
+                return; // we are only trying.
+            }
+        }
+
+        otErr << __FUNCTION__ << " Error: " << e.GetWhat() << "\n";
+
+        std::string input_string(input.begin(), input.end());
+        otErr << "Input: \n --- \n" << input_string << "\n --- \n";
+
+        throw std::exception(e);
+    }
+
+    out.resize(static_cast<size_t>(zlibdecompressor.TotalBytesRetrievable()));
+    out.resize(zlibdecompressor.Get(reinterpret_cast<uint8_t*>(&out.at(0)),
+        out.size()));
+}
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::encode_data_base64(const ot_data_t& in,
+    ot_data_t& out)
+{
+    const ot_data_t input = in;  // take a copy
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::Base64Encoder base64Encoder;
+
+    base64Encoder.PutMessageEnd(&input.at(0), input.size());
+
+    out.resize(static_cast<size_t>(base64Encoder.TotalBytesRetrievable()));
+    out.resize(
+        base64Encoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decode_data_base64(const ot_data_t& in,
+    ot_data_t& out)
+{
+
+    const ot_data_t input = in;
+    out.clear();
+    if (input.empty()) return;
+
+    CryptoPP::Base64Decoder base64Decoder;
+
+    try
+    {
+        base64Decoder.PutMessageEnd(&input.at(0), input.size());
+    }
+    catch (errBlockingInputOnly e)
+    {
+        OT_FAIL_MSG("crypto++ failure \n");
+        throw std::exception(e);
+    }
+
+    out.resize(static_cast<size_t>(base64Decoder.TotalBytesRetrievable()));
+    out.resize(
+        base64Decoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
+
+
 // static
 OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash256_function OTCrypto_OpenSSL::
-    OTCrypto_CryptoPP::get_func_by_name(const std::string& name)
+OTCrypto_CryptoPP::get_func_by_name(const std::string& name)
 {
 
     if (name.compare("SHA256") == 0) {
@@ -307,6 +438,7 @@ OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash256_function OTCrypto_OpenSSL::
     // we have not the hash you are looking for
     OT_FAIL;
 }
+
 
 // static
 void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_sha256(const ot_data_t& in,
@@ -360,6 +492,12 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_samy(const ot_data_t& in,
 void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hmac_sha1(const ot_data_t& in,
                                                     ot_data_t& out)
 {
+    {
+        auto outsize = out.size();
+        out.clear();
+        out.resize(outsize);
+    }
+
     CryptoPP::HMAC<CryptoPP::SHA1> hmac;
 
     hmac.SetKey(&in.at(0), in.size());
@@ -372,6 +510,12 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
     const ot_data_t& in, const ot_data_t& salt, const uint32_t uIterations,
     ot_data_t& out)
 {
+    {
+        auto outsize = out.size();
+        out.clear();
+        out.resize(outsize);
+    }
+
     CryptoPP::PKCS5_PBKDF2_HMAC<CryptoPP::SHA1> pkcs5;
 
     pkcs5.DeriveKey(&out.at(0), out.size(), 0, &in.at(0), in.size(),
@@ -872,7 +1016,7 @@ bool OTCrypto::Base64Encode(const OTData& theInput, OTString& strOutput,
     // pChar not nullptr, and must be cleaned up.
     //
     strOutput.Set(pChar);
-    delete pChar;
+    delete [] pChar;
     pChar = nullptr;
 
     return true; // <=== Success.
@@ -900,7 +1044,7 @@ bool OTCrypto::Base64Decode(const OTString& strInput, OTData& theOutput,
     uint32_t lNewSize = static_cast<uint32_t>(theSize);
 
     theOutput.Assign(pVoid, lNewSize);
-    delete pOutput;
+    delete [] pOutput;
     pOutput = nullptr;
 
     return true; // <=== Success.
@@ -1469,18 +1613,65 @@ uint8_t* ot_openssl_base64_decode(const char* input, size_t* out_len,
 }
 } // extern "C"
 
-// Caller responsible to delete.
+// Caller responsible to delete [].
 char* OTCrypto_OpenSSL::Base64Encode(const uint8_t* input, int32_t in_len,
                                      bool bLineBreaks) const
 {
-    return ot_openssl_base64_encode(input, in_len, (bLineBreaks ? 1 : 0));
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    ot_data_t inout(input, input + in_len);
+    OTCrypto_OpenSSL::OTCrypto_CryptoPP::encode_data_base64(inout, inout);
+
+    auto out = new uint8_t[inout.size()];
+
+    std::copy(inout.begin(), inout.end(), out);
+
+    return reinterpret_cast<char *>(out);
+
+#else
+    auto a = ot_openssl_base64_encode(input, in_len, (bLineBreaks ? 1 : 0));
+
+    const auto len = std::string(a).length();
+
+    auto data = new char[len];
+    std::copy(a, a + len, data);
+
+    free(a);
+
+    return data;
+
+#endif
 }
 
-// Caller responsible to delete.
+// Caller responsible to delete using delete [];
 uint8_t* OTCrypto_OpenSSL::Base64Decode(const char* input, size_t* out_len,
                                         bool bLineBreaks) const
 {
-    return ot_openssl_base64_decode(input, out_len, (bLineBreaks ? 1 : 0));
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    std::string in(input);
+
+    ot_data_t inout(in.begin(),in.end());
+    OTCrypto_OpenSSL::OTCrypto_CryptoPP::decode_data_base64(inout, inout);
+
+    auto data = new uint8_t[inout.size()];
+    std::copy(inout.begin(), inout.end(), data);
+
+    *out_len = inout.size();
+
+    return data;
+
+#else
+   auto a = ot_openssl_base64_decode(input, out_len, (bLineBreaks ? 1 : 0));
+
+   auto data = new uint8_t[*out_len];
+   std::copy(a, a + *out_len, data);
+
+   free(a);
+
+   return data;
+
+#endif
 }
 
 // SET (binary id) FROM BASE62-ENCODED STRING
