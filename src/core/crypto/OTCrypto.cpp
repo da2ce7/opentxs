@@ -218,8 +218,17 @@ extern "C" {
 
 #endif
 
+
+#include <iostream>
+#include <string>
+#include <locale>
 #include <cstdint>
 #include <functional>
+
+#ifndef _WIN32
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 #ifdef __APPLE__
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -770,85 +779,51 @@ int32_t main()
 #define _PASSWORD_LEN 128
 #endif
 
+#ifdef _WIN32
+void echo(bool on = true)
+{
+    DWORD  mode;
+    HANDLE hConIn = GetStdHandle(STD_INPUT_HANDLE);
+    GetConsoleMode(hConIn, &mode);
+    mode = on
+        ? (mode | ENABLE_ECHO_INPUT)
+        : (mode & ~(ENABLE_ECHO_INPUT));
+    SetConsoleMode(hConIn, mode);
+};
+#else
+
+void echo(bool on = true)
+{
+    struct termios settings;
+    tcgetattr(STDIN_FILENO, &settings);
+    settings.c_lflag = on
+        ? (settings.c_lflag | ECHO)
+        : (settings.c_lflag & ~(ECHO));
+    tcsetattr(STDIN_FILENO, TCSANOW, &settings);
+}
+#endif
+
+
 bool OTCrypto::GetPasswordFromConsoleLowLevel(OTPassword& theOutput,
                                               const char* szPrompt) const
 {
     OT_ASSERT(nullptr != szPrompt);
 
-#ifdef _WIN32
-    {
-        std::cout << szPrompt;
+    std::cout << szPrompt;
 
-        {
-            std::string strPassword = "";
+    std::wstring passowrd;
+    echo(false);
+    std::getline(std::wcin, passowrd);
+    echo(true);
 
-#ifdef UNICODE
+    std::string password_utf8(OTString::wstring_to_utf8(passowrd));
 
-            const wchar_t enter[] = {L'\x000D', L'\x0000'}; // carrage return
-            const std::wstring wstrENTER = enter;
+    theOutput;
+    theOutput.setPassword(password_utf8.c_str(), password_utf8.length());
 
-            std::wstring wstrPass = L"";
+    std::cout << std::endl;
 
-            for (;;) {
-                const wchar_t ch[] = {_getwch(), L'\x0000'};
-                const std::wstring wstrCH = ch;
-                if (wstrENTER == wstrCH) break;
-                wstrPass.append(wstrCH);
-            }
-            strPassword = OTString::ws2s(wstrPass);
-
-#else
-
-            const char enter[] = {'\x0D', '\x00'}; // carrage return
-            const std::string strENTER = enter;
-
-            std::string strPass = "";
-
-            for (;;) {
-                const char ch[] = {_getch(), '\x00'};
-                const std::string strCH = ch;
-                if (strENTER == strCH) break;
-                strPass.append(strCH);
-            }
-            strPassword = strPass;
-
-#endif
-            theOutput.setPassword(
-                strPassword.c_str(),
-                static_cast<int32_t>(strPassword.length() - 1));
-        }
-
-        std::cout << std::endl; // new line.
-        return true;
-    }
-#elif defined(OT_CRYPTO_USING_OPENSSL)
-    // todo security: might want to allow to set OTPassword's size and copy
-    // directly into it,
-    // so that we aren't using this temp buf in between, which, although we're
-    // zeroing it, could
-    // technically end up getting swapped to disk.
-    //
-    {
-        char buf[_PASSWORD_LEN + 10] = "", buff[_PASSWORD_LEN + 10] = "";
-
-        if (UI_UTIL_read_pw(buf, buff, _PASSWORD_LEN, szPrompt, 0) == 0) {
-            size_t nPassLength = OTString::safe_strlen(buf, _PASSWORD_LEN);
-            theOutput.setPassword_uint8(reinterpret_cast<uint8_t*>(buf),
-                                        nPassLength);
-            OTPassword::zeroMemory(buf, nPassLength);
-            OTPassword::zeroMemory(buff, nPassLength);
-            return true;
-        }
-        else
-            return false;
-    }
-#else
-    {
-        otErr << "__FUNCTION__: Open-Transactions is not compiled to collect "
-              << "the passphrase from the console!\n";
-        return false;
-    }
-#endif
+    return true;
 }
 
 // get pass phrase, length 'len' into 'tmp'

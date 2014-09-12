@@ -140,9 +140,17 @@
 #include "crypto/OTSignature.hpp"
 #include "util/StringUtils.hpp"
 
+#include <codecvt>
+#include <iostream>
+#include <string>
+#include <locale>
+
+
+
 #if !(defined(_WIN32) || defined(TARGET_OS_IPHONE) || defined(ANDROID))
 #include <wordexp.h>
 #endif
+
 
 namespace opentxs
 {
@@ -455,6 +463,23 @@ std::string OTString::ws2s(const std::wstring& s)
 }
 
 #endif
+
+
+// convert UTF-8 string to wstring
+//static
+std::wstring OTString::utf8_to_wstring(const std::string& str)
+{
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> myconv;
+    return myconv.from_bytes(str);
+}
+
+// convert wstring to UTF-8 string
+//static
+std::string OTString::wstring_to_utf8(const std::wstring& str)
+{
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> myconv;
+    return myconv.to_bytes(str);
+}
 
 // ------ I cannot vouch for these top four functions, I wrote them so long ago.
 // ------ But they can't hurt and I don't think they're being used anyway so I

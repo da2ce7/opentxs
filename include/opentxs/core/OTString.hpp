@@ -216,6 +216,12 @@ public:
     EXPORT static std::string ws2s(const std::wstring& s);
 #endif
 
+    // convert UTF-8 string to wstring
+    EXPORT static std::wstring utf8_to_wstring(const std::string& str);
+
+    // convert wstring to UTF-8 string
+    EXPORT static std::string wstring_to_utf8(const std::wstring& str);
+
 public:
     EXPORT static bool safe_strcpy(
         char* dest, const char* src,
