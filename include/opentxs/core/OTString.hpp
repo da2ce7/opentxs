@@ -158,11 +158,10 @@ class OTIdentifier;
 class OTPseudonym;
 class OTSignature;
 
-// global
+// for variable lengths
 typedef std::vector<uint8_t> ot_data_t;
-typedef std::vector<const uint8_t> ot_const_data_t; // write only
 
-// for hashes
+// for fixed lenfths
 typedef std::array<uint8_t, 16> ot_array_16_t;
 typedef std::array<uint8_t, 20> ot_array_20_t;
 typedef std::array<uint8_t, 24> ot_array_24_t;

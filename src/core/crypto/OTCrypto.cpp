@@ -178,7 +178,12 @@ extern "C" {
 #include <c5/hmac.h>
 #include <c5/pwdbased.h>
 
+#include <c5/modes.h>
+
+#include <c5/aes.h>
+
 #include <c5/rsa.h>
+#include <c5/des.h>
 
 #endif
 
@@ -280,6 +285,8 @@ public:
 
 class OTCrypto_OpenSSL::OTCrypto_CryptoPP
 {
+private:
+
 
 public:
 
@@ -297,7 +304,7 @@ public:
 
 
     typedef std::function<void(const ot_data_t& in, ot_array_32_t& out)>
-    hash256_function;
+        hash256_function;
 
     static hash256_function get_func_by_name(const std::string& name);
 
@@ -313,6 +320,13 @@ public:
                                        const ot_data_t& salt,
                                        const uint32_t uIterations,
                                        ot_data_t& out);
+
+
+
+    static void encrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out);
+    static void decrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out);
+
+
 };
 
 
@@ -320,10 +334,9 @@ public:
 void OTCrypto_OpenSSL::OTCrypto_CryptoPP::compress_data_zlib(const ot_data_t& in,
     ot_data_t& out)
 {
-
-    const ot_data_t input = in;
-    out.clear();
+    const auto input = in;  // take a copy
     if (input.empty()) return;
+    out.clear();
 
     CryptoPP::ZlibCompressor zibcompressor;
 
@@ -341,10 +354,9 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decompress_data_zlib(const ot_data_t& 
     ot_data_t& out,
     const bool attempt)
 {
-
-    const ot_data_t input = in;
-    out.clear();
+    const auto input = in;  // take a copy
     if (input.empty()) return;
+    out.clear();
 
     CryptoPP::ZlibDecompressor zlibdecompressor;
 
@@ -387,9 +399,9 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decompress_data_zlib(const ot_data_t& 
 void OTCrypto_OpenSSL::OTCrypto_CryptoPP::encode_data_base64(const ot_data_t& in,
     ot_data_t& out)
 {
-    const ot_data_t input = in;  // take a copy
-    out.clear();
+    const auto input = in;  // take a copy
     if (input.empty()) return;
+    out.clear();
 
     CryptoPP::Base64Encoder base64Encoder;
 
@@ -404,10 +416,9 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::encode_data_base64(const ot_data_t& in
 void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decode_data_base64(const ot_data_t& in,
     ot_data_t& out)
 {
-
-    const ot_data_t input = in;
-    out.clear();
+    const auto input = in;  // take a copy
     if (input.empty()) return;
+    out.clear();
 
     CryptoPP::Base64Decoder base64Decoder;
 
@@ -501,15 +512,17 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_samy(const ot_data_t& in,
 void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hmac_sha1(const ot_data_t& in,
                                                     ot_data_t& out)
 {
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
     {
-        auto outsize = out.size();
+        const auto outsize = out.size();
         out.clear();
         out.resize(outsize);
     }
 
     CryptoPP::HMAC<CryptoPP::SHA1> hmac;
 
-    hmac.SetKey(&in.at(0), in.size());
+    hmac.SetKey(&input.at(0), input.size());
 
     hmac.TruncatedFinal(&out.at(0), out.size());
 }
@@ -519,17 +532,121 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
     const ot_data_t& in, const ot_data_t& salt, const uint32_t uIterations,
     ot_data_t& out)
 {
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
     {
-        auto outsize = out.size();
+        const auto outsize = out.size();
         out.clear();
         out.resize(outsize);
     }
 
     CryptoPP::PKCS5_PBKDF2_HMAC<CryptoPP::SHA1> pkcs5;
 
-    pkcs5.DeriveKey(&out.at(0), out.size(), 0, &in.at(0), in.size(),
+    pkcs5.DeriveKey(&out.at(0), out.size(), 0, &input.at(0), input.size(),
                     &salt.at(0), salt.size(), uIterations);
 }
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::encrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out)
+{
+    class AesEncryptor : public CryptoPP::ProxyFilter
+    {
+    public:
+        AesEncryptor(const ot_array_16_t& key,
+            const ot_array_16_t& iv,
+            CryptoPP::BufferedTransformation *attachment = nullptr)
+            : ProxyFilter(nullptr, 0, 0, attachment)
+            , m_key(key)
+            , m_iv(iv) {};
+
+    private:
+        CryptoPP::CBC_Mode<CryptoPP::AES>::Encryption m_cipher;
+
+        const ot_array_16_t& m_key;
+        const ot_array_16_t& m_iv;
+
+    protected:
+        void FirstPut(const byte *){
+            m_cipher.SetKeyWithIV(m_key.data(), m_key.size(), m_iv.data());
+            SetFilter(new CryptoPP::StreamTransformationFilter(m_cipher));
+        };
+
+        void LastPut(const byte *inString, size_t length){
+            m_filter->MessageEnd();
+        }
+    };
+
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
+
+    out.clear();
+    out.resize(input.size());
+
+    AesEncryptor enc(key, iv);
+
+    enc.PutMessageEnd(input.data(), input.size());
+    
+    out.resize(static_cast<size_t>(enc.TotalBytesRetrievable()));
+    out.resize(
+        enc.Get(reinterpret_cast<uint8_t*>(out.data()), out.size()));
+
+}
+
+// static
+void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out)
+{
+    class AesDecryptor : public CryptoPP::ProxyFilter
+    {
+    public:
+        AesDecryptor(const ot_array_16_t& key,
+            const ot_array_16_t& iv,
+            CryptoPP::BufferedTransformation *attachment = nullptr)
+            : ProxyFilter(nullptr, 0, 0, attachment)
+            , m_key(key)
+            , m_iv(iv) {};
+
+    private:
+        const ot_array_16_t& m_key;
+        const ot_array_16_t& m_iv;
+
+        CryptoPP::CBC_Mode<CryptoPP::AES>::Decryption m_cipher;
+        CryptoPP::member_ptr<FilterWithBufferedInput> m_decryptor;
+
+    protected:
+        void FirstPut(const byte *inString)
+        {
+            m_cipher.SetKeyWithIV(m_key.data(), m_key.size(), m_iv.data());
+            SetFilter(new CryptoPP::StreamTransformationFilter(m_cipher));
+        }
+        void LastPut(const byte *inString, size_t length)
+        {
+            m_filter->MessageEnd();
+        }
+    };
+
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
+
+    out.clear();
+    out.resize(input.size());
+
+    AesDecryptor dec(key, iv);
+
+    try {
+        dec.PutMessageEnd(input.data(), input.size());
+    }
+    catch (CryptoPP::InvalidCiphertext e) {
+
+        otErr << "bad input Ciphertext: " << e.GetWhat() << e.GetErrorType() << std::endl;
+        out.clear();
+        return;
+    }
+
+    out.resize(static_cast<size_t>(dec.TotalBytesRetrievable()));
+    out.resize(
+        dec.Get(reinterpret_cast<uint8_t*>(out.data()), out.size()));
+}
+
 
 #endif
 
@@ -818,7 +935,6 @@ bool OTCrypto::GetPasswordFromConsoleLowLevel(OTPassword& theOutput,
 
     std::string password_utf8(OTString::wstring_to_utf8(passowrd));
 
-    theOutput;
     theOutput.setPassword(password_utf8.c_str(), password_utf8.length());
 
     std::cout << std::endl;
@@ -826,23 +942,6 @@ bool OTCrypto::GetPasswordFromConsoleLowLevel(OTPassword& theOutput,
     return true;
 }
 
-// get pass phrase, length 'len' into 'tmp'
-/*
-int32_t len=0;
-char *tmp=nullptr;
-//        tmp = "test";
-len = strlen(tmp);
-
-if (len <= 0)
-    return 0;
-
-// if too int64_t, truncate
-if (len > size)
-    len = size;
-
-memcpy(buf, tmp, len);
-return len;
- */
 
 bool OTCrypto::GetPasswordFromConsole(OTPassword& theOutput, bool bRepeat) const
 {
@@ -1876,7 +1975,8 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
             OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
                 password, salt, uIterations, output_key);
 
-            std::fill(password.begin(), password.end(), '/0');
+
+            for (volatile auto &a : password)   { a = 0; }
             password.clear();
         }
 
@@ -1884,7 +1984,7 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
         OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
             output_key, salt, uIterations, check_key);
 
-        std::fill(salt.begin(), salt.end(), '/0');
+        for (volatile auto &a : salt)   { a = 0; }
         salt.clear();
     }
 
@@ -1919,7 +2019,7 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
     std::copy(output_key.begin(), output_key.end(),
         static_cast<uint8_t*>(pDerivedKey->getMemoryWritable()));
 
-    std::fill(output_key.begin(), output_key.end(), '/0');
+    for (volatile auto &a : output_key)   { a = 0; }
     output_key.clear();
 
     return pDerivedKey;
@@ -2563,6 +2663,37 @@ bool OTCrypto_OpenSSL::Encrypt(
                                                          // and passed in.)
     OTPayload& theEncryptedOutput) const // OUTPUT. (Ciphertext.)
 {
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    ot_array_16_t key, iv;
+
+    OT_ASSERT(key.size() == theRawSymmetricKey.getMemorySize());
+    OT_ASSERT(iv.size() == theIV.GetSize());
+
+    std::copy(theRawSymmetricKey.getMemory_uint8(),
+        theRawSymmetricKey.getMemory_uint8() + theRawSymmetricKey.getMemorySize(),
+        key.data());
+
+    std::copy(static_cast<const uint8_t*>(theIV.GetPointer()),
+        static_cast<const uint8_t*>(theIV.GetPointer()) + theIV.GetSize(),
+        iv.data());
+
+    auto input_uint8 = reinterpret_cast<const uint8_t *>(szInput);
+
+    ot_data_t inout(input_uint8, input_uint8 + lInputLength);
+
+    OTCrypto_CryptoPP::encrypt_aes_128_cbc(inout, key, iv, inout);
+
+    theEncryptedOutput.Assign(inout.data(), inout.size());
+
+    for (volatile auto &a : key)   { a = 0; }
+    for (volatile auto &a : iv)    { a = 0; }
+    for (volatile auto &a : inout) { a = 0; }
+
+    return true;
+
+#else
+
     const char* szFunc = "OTCrypto_OpenSSL::Encrypt";
 
     OT_ASSERT(OTCryptoConfig::SymmetricIvSize() == theIV.GetSize());
@@ -2676,6 +2807,7 @@ bool OTCrypto_OpenSSL::Encrypt(
             static_cast<uint32_t>(len_out));
 
     return true;
+#endif
 }
 
 bool OTCrypto_OpenSSL::Decrypt(
@@ -2690,6 +2822,39 @@ bool OTCrypto_OpenSSL::Decrypt(
 // OTPayload& here (either
 // will work.)
 {
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    ot_array_16_t key, iv;
+
+    OT_ASSERT(key.size() == theRawSymmetricKey.getMemorySize());
+    OT_ASSERT(iv.size() == theIV.GetSize());
+
+    theDecryptedOutput.Release();
+
+    std::copy(theRawSymmetricKey.getMemory_uint8(),
+        theRawSymmetricKey.getMemory_uint8() + theRawSymmetricKey.getMemorySize(),
+        key.data());
+
+    std::copy(static_cast<const uint8_t*>(theIV.GetPointer()),
+        static_cast<const uint8_t*>(theIV.GetPointer()) + theIV.GetSize(),
+        iv.data());
+
+    auto input_uint8 = reinterpret_cast<const uint8_t *>(szInput);
+
+    ot_data_t inout(input_uint8, input_uint8 + lInputLength);
+
+    OTCrypto_CryptoPP::decrypt_aes_128_cbc(inout, key, iv, inout);
+    if (inout.empty()) return false; //error
+
+    theDecryptedOutput.Concatenate(inout.data(), inout.size());
+
+    for (volatile auto &a : key)   { a = 0; }
+    for (volatile auto &a : iv)    { a = 0; }
+    for (volatile auto &a : inout) { a = 0; }
+
+    return true;
+
+#else
     const char* szFunc = "OTCrypto_OpenSSL::Decrypt";
 
     OT_ASSERT(OTCryptoConfig::SymmetricIvSize() == theIV.GetSize());
@@ -2810,6 +2975,8 @@ bool OTCrypto_OpenSSL::Decrypt(
         }
 
     return true;
+
+#endif
 }
 
 // Seal up as envelope (Asymmetric, using public key and then AES key.)
