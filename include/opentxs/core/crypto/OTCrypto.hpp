@@ -240,6 +240,19 @@ protected:
     virtual void Cleanup_Override() const;
 
 public:
+
+    // new api (no virtual)
+
+    // encoding
+    void encode_data_base64(const ot_data_t& in, ot_data_t& out) const;
+    void decode_data_base64(const ot_data_t& in, ot_data_t& out) const;
+
+    // compression
+    void compress_data_zlib(const ot_data_t& in, ot_data_t& out) const;
+    void decompress_data_zlib(const ot_data_t& in, ot_data_t& out,
+        const bool attempt = false) const;
+
+
     virtual ~OTCrypto();
     // InstantiateBinarySecret
     // (To instantiate a text secret, just do this: OTPassword thePass;)
@@ -406,8 +419,6 @@ public:
 class OTCrypto_OpenSSL : public OTCrypto
 {
     friend class OTCrypto;
-
-    class OTCrypto_CryptoPP;
 
 protected:
     OTCrypto_OpenSSL();

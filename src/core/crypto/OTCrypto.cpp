@@ -283,26 +283,18 @@ public:
 
 #ifdef OT_CRYPTO_PREFER_CRYPTOPP
 
-class OTCrypto_OpenSSL::OTCrypto_CryptoPP
+struct OTCrypto_CryptoPP
 {
-private:
+    // encoding
+    static void encode_data_base64(const ot_data_t& in, ot_data_t& out);
+    static void decode_data_base64(const ot_data_t& in, ot_data_t& out);
 
-
-public:
-
-    typedef CryptoPP::BufferedTransformation::BlockingInputOnly
-        errBlockingInputOnly;
-
-
-
+    // compression
     static void compress_data_zlib(const ot_data_t& in, ot_data_t& out);
     static void decompress_data_zlib(const ot_data_t& in, ot_data_t& out,
         const bool attempt = false);
 
-    static void encode_data_base64(const ot_data_t& in, ot_data_t& out);
-    static void decode_data_base64(const ot_data_t& in, ot_data_t& out);
-
-
+    // hashing
     typedef std::function<void(const ot_data_t& in, ot_array_32_t& out)>
         hash256_function;
 
@@ -315,23 +307,62 @@ public:
 
     static void hash_samy(const ot_data_t& in, ot_array_32_t& out);
 
+    // key-streching
     static void hmac_sha1(const ot_data_t& in, ot_data_t& out);
     static void pkcs5_pbkdf2_hmac_sha1(const ot_data_t& in,
                                        const ot_data_t& salt,
                                        const uint32_t uIterations,
                                        ot_data_t& out);
 
+    // symmetric encryption
+    static void encrypt_aes_128_cbc(const ot_data_t& in,
+        const ot_array_16_t& key,
+        const ot_array_16_t& iv,
+        ot_data_t& out);
 
-
-    static void encrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out);
-    static void decrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out);
-
-
+    static void decrypt_aes_128_cbc(const ot_data_t& in,
+        const ot_array_16_t& key,
+        const ot_array_16_t& iv,
+        ot_data_t& out);
 };
+
+// static
+void OTCrypto_CryptoPP::encode_data_base64(const ot_data_t& in,
+    ot_data_t& out)
+{
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
+    out.clear();
+
+    CryptoPP::Base64Encoder base64Encoder;
+
+    base64Encoder.PutMessageEnd(&input.at(0), input.size());
+
+    out.resize(static_cast<size_t>(base64Encoder.TotalBytesRetrievable()));
+    out.resize(
+        base64Encoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
+
+// static
+void OTCrypto_CryptoPP::decode_data_base64(const ot_data_t& in,
+    ot_data_t& out)
+{
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
+    out.clear();
+
+    CryptoPP::Base64Decoder base64Decoder;
+
+    base64Decoder.PutMessageEnd(&input.at(0), input.size());
+
+    out.resize(static_cast<size_t>(base64Decoder.TotalBytesRetrievable()));
+    out.resize(
+        base64Decoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
 
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::compress_data_zlib(const ot_data_t& in,
+void OTCrypto_CryptoPP::compress_data_zlib(const ot_data_t& in,
     ot_data_t& out)
 {
     const auto input = in;  // take a copy
@@ -350,9 +381,8 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::compress_data_zlib(const ot_data_t& in
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decompress_data_zlib(const ot_data_t& in,
-    ot_data_t& out,
-    const bool attempt)
+void OTCrypto_CryptoPP::decompress_data_zlib(const ot_data_t& in,
+    ot_data_t& out, const bool attempt)
 {
     const auto input = in;  // take a copy
     if (input.empty()) return;
@@ -366,12 +396,6 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decompress_data_zlib(const ot_data_t& 
         zlibdecompressor.PutMessageEnd(&input.at(0), input.size());
         zlibdecompressor.Flush(1);
     }
-    catch (errBlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure \n");
-        throw std::exception(e);
-    }
-
     catch (CryptoPP::ZlibDecompressor::Err e)
     {
 
@@ -395,51 +419,9 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decompress_data_zlib(const ot_data_t& 
         out.size()));
 }
 
-// static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::encode_data_base64(const ot_data_t& in,
-    ot_data_t& out)
-{
-    const auto input = in;  // take a copy
-    if (input.empty()) return;
-    out.clear();
-
-    CryptoPP::Base64Encoder base64Encoder;
-
-    base64Encoder.PutMessageEnd(&input.at(0), input.size());
-
-    out.resize(static_cast<size_t>(base64Encoder.TotalBytesRetrievable()));
-    out.resize(
-        base64Encoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
-}
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decode_data_base64(const ot_data_t& in,
-    ot_data_t& out)
-{
-    const auto input = in;  // take a copy
-    if (input.empty()) return;
-    out.clear();
-
-    CryptoPP::Base64Decoder base64Decoder;
-
-    try
-    {
-        base64Decoder.PutMessageEnd(&input.at(0), input.size());
-    }
-    catch (errBlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure \n");
-        throw std::exception(e);
-    }
-
-    out.resize(static_cast<size_t>(base64Decoder.TotalBytesRetrievable()));
-    out.resize(
-        base64Decoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
-}
-
-
-// static
-OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash256_function OTCrypto_OpenSSL::
+OTCrypto_CryptoPP::hash256_function 
 OTCrypto_CryptoPP::get_func_by_name(const std::string& name)
 {
 
@@ -461,7 +443,7 @@ OTCrypto_CryptoPP::get_func_by_name(const std::string& name)
 
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_sha256(const ot_data_t& in,
+void OTCrypto_CryptoPP::hash_sha256(const ot_data_t& in,
                                                       ot_array_32_t& out)
 {
     CryptoPP::SHA256 hash;
@@ -470,7 +452,7 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_sha256(const ot_data_t& in,
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_whirlpool(const ot_data_t& in,
+void OTCrypto_CryptoPP::hash_whirlpool(const ot_data_t& in,
                                                          ot_array_64_t& out)
 {
 
@@ -480,7 +462,7 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_whirlpool(const ot_data_t& in,
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_whirlpool256(const ot_data_t& in,
+void OTCrypto_CryptoPP::hash_whirlpool256(const ot_data_t& in,
                                                             ot_array_32_t& out)
 {
     CryptoPP::Whirlpool hash;
@@ -489,7 +471,7 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_whirlpool256(const ot_data_t& in,
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_samy(const ot_data_t& in,
+void OTCrypto_CryptoPP::hash_samy(const ot_data_t& in,
                                                     ot_array_32_t& out)
 {
     CryptoPP::SHA256 hash_sha256;
@@ -509,7 +491,7 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hash_samy(const ot_data_t& in,
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hmac_sha1(const ot_data_t& in,
+void OTCrypto_CryptoPP::hmac_sha1(const ot_data_t& in,
                                                     ot_data_t& out)
 {
     const auto input = in;  // take a copy
@@ -528,7 +510,7 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::hmac_sha1(const ot_data_t& in,
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
+void OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
     const ot_data_t& in, const ot_data_t& salt, const uint32_t uIterations,
     ot_data_t& out)
 {
@@ -547,7 +529,7 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::encrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out)
+void OTCrypto_CryptoPP::encrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out)
 {
     class AesEncryptor : public CryptoPP::ProxyFilter
     {
@@ -593,7 +575,7 @@ void OTCrypto_OpenSSL::OTCrypto_CryptoPP::encrypt_aes_128_cbc(const ot_data_t& i
 }
 
 // static
-void OTCrypto_OpenSSL::OTCrypto_CryptoPP::decrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out)
+void OTCrypto_CryptoPP::decrypt_aes_128_cbc(const ot_data_t& in, const ot_array_16_t& key, const ot_array_16_t& iv, ot_data_t& out)
 {
     class AesDecryptor : public CryptoPP::ProxyFilter
     {
@@ -834,6 +816,30 @@ OTCrypto::OTCrypto()
 OTCrypto::~OTCrypto()
 {
 }
+
+// this will be cleaned up in the future. (cam)
+
+// encoding
+void OTCrypto::encode_data_base64(const ot_data_t& in, ot_data_t& out) const
+{
+    return OTCrypto_CryptoPP::encode_data_base64(in, out);
+}
+void OTCrypto::decode_data_base64(const ot_data_t& in, ot_data_t& out) const
+{
+    return OTCrypto_CryptoPP::decode_data_base64(in, out);
+}
+
+// compression
+void OTCrypto::compress_data_zlib(const ot_data_t& in, ot_data_t& out) const
+{
+    return OTCrypto_CryptoPP::compress_data_zlib(in, out);
+}
+void OTCrypto::decompress_data_zlib(const ot_data_t& in, ot_data_t& out,
+    const bool attempt) const
+{
+    return OTCrypto_CryptoPP::decompress_data_zlib(in, out, attempt);
+}
+
 
 bool OTCrypto::IsBase62(const std::string& str) const
 {
@@ -1694,7 +1700,7 @@ char* OTCrypto_OpenSSL::Base64Encode(const uint8_t* input, int32_t in_len,
 #ifdef OT_CRYPTO_PREFER_CRYPTOPP
 
     ot_data_t inout(input, input + in_len);
-    OTCrypto_OpenSSL::OTCrypto_CryptoPP::encode_data_base64(inout, inout);
+    OTCrypto_CryptoPP::encode_data_base64(inout, inout);
 
     auto out = new uint8_t[inout.size()];
 
@@ -1726,7 +1732,7 @@ uint8_t* OTCrypto_OpenSSL::Base64Decode(const char* input, size_t* out_len,
     std::string in(input);
 
     ot_data_t inout(in.begin(),in.end());
-    OTCrypto_OpenSSL::OTCrypto_CryptoPP::decode_data_base64(inout, inout);
+    OTCrypto_CryptoPP::decode_data_base64(inout, inout);
 
     auto data = new uint8_t[inout.size()];
     std::copy(inout.begin(), inout.end(), data);
@@ -1972,7 +1978,7 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
             }
 
             // first: Derive Key
-            OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
+            OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
                 password, salt, uIterations, output_key);
 
 
@@ -1981,7 +1987,7 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
         }
 
         // second: Derive Checksum
-        OTCrypto_OpenSSL::OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
+        OTCrypto_CryptoPP::pkcs5_pbkdf2_hmac_sha1(
             output_key, salt, uIterations, check_key);
 
         for (volatile auto &a : salt)   { a = 0; }

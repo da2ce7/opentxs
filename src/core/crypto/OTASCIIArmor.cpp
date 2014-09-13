@@ -141,14 +141,6 @@
 #include <fstream>
 #include <memory>
 
-// will remove later, with lots of testing.
-#define CRYPTOPP_DISABLE_ASM
-#define CRYPTOPP_DISABLE_SSSE3
-#define CRYPTOPP_DISABLE_AESNI
-
-#include <c5/zlib.h>
-#include <c5/base64.h>
-
 namespace opentxs
 {
 
@@ -156,9 +148,6 @@ class OTASCIIArmor::OTASCIIArmorPrivdp
 {
 private:
     OTASCIIArmor* const backlink;
-
-    typedef CryptoPP::BufferedTransformation::BlockingInputOnly
-    errBlockingInputOnly;
 
 public:
     explicit OTASCIIArmorPrivdp(OTASCIIArmor* const backlink)
@@ -170,13 +159,6 @@ public:
     void get_decoded_data(ot_data_t& out) const;
     void get_decompressed_data(ot_data_t& out,
                                const bool attempt = false) const;
-
-    void compress_data(const ot_data_t& in, ot_data_t& out) const;
-    void decompress_data(const ot_data_t& in, ot_data_t& out,
-                         const bool attempt = false) const;
-
-    void encode_data(const ot_data_t& in, ot_data_t& out) const;
-    void decode_data(const ot_data_t& in, ot_data_t& out) const;
 };
 
 void OTASCIIArmor::OTASCIIArmorPrivdp::get_data(ot_data_t& out) const
@@ -208,7 +190,7 @@ void OTASCIIArmor::OTASCIIArmorPrivdp::get_decoded_data(ot_data_t& out) const
 
     try
     {
-        this->decode_data(data, data);
+        OTCrypto::It()->decode_data_base64(data, data);
     }
     catch (const std::runtime_error&)
     {
@@ -236,7 +218,7 @@ void OTASCIIArmor::OTASCIIArmorPrivdp::get_decompressed_data(
 
     try
     {
-        this->decompress_data(data, decompressed, attempt);
+        OTCrypto::It()->decompress_data_zlib(data, decompressed, attempt);
         if (decompressed.empty()) {
             out = data;
             return;
@@ -256,128 +238,6 @@ void OTASCIIArmor::OTASCIIArmorPrivdp::get_decompressed_data(
     out = decompressed;
 }
 
-void OTASCIIArmor::OTASCIIArmorPrivdp::compress_data(const ot_data_t& in,
-                                                     ot_data_t& out) const
-{
-
-    const ot_data_t input = in;
-    out.clear();
-    if (input.empty()) return;
-
-    CryptoPP::ZlibCompressor zibcompressor;
-
-    try
-    {
-        zibcompressor.Initialize();
-        zibcompressor.PutMessageEnd(&input.at(0), input.size());
-        zibcompressor.Flush(1);
-    }
-    catch (errBlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure \n");
-        throw std::exception(e);
-    }
-
-    out.resize(static_cast<size_t>(zibcompressor.TotalBytesRetrievable()));
-    out.resize(
-        zibcompressor.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
-}
-
-void OTASCIIArmor::OTASCIIArmorPrivdp::decompress_data(const ot_data_t& in,
-                                                       ot_data_t& out,
-                                                       const bool attempt) const
-{
-
-    const ot_data_t input = in;
-    out.clear();
-    if (input.empty()) return;
-
-    CryptoPP::ZlibDecompressor zlibdecompressor;
-
-    try
-    {
-        zlibdecompressor.Initialize();
-        zlibdecompressor.PutMessageEnd(&input.at(0), input.size());
-        zlibdecompressor.Flush(1);
-    }
-    catch (errBlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure \n");
-        throw std::exception(e);
-    }
-
-    catch (CryptoPP::ZlibDecompressor::Err e)
-    {
-
-        if (attempt) {
-            if (e.GetErrorType() ==
-                CryptoPP::ZlibDecompressor::Err::INVALID_DATA_FORMAT) {
-                return; // we are only trying.
-            }
-        }
-
-        otErr << __FUNCTION__ << " Error: " << e.GetWhat() << "\n";
-
-        std::string input_string(input.begin(), input.end());
-        otErr << "Input: \n --- \n" << input_string << "\n --- \n";
-
-        throw std::exception(e);
-    }
-
-    out.resize(static_cast<size_t>(zlibdecompressor.TotalBytesRetrievable()));
-    out.resize(zlibdecompressor.Get(reinterpret_cast<uint8_t*>(&out.at(0)),
-                                    out.size()));
-}
-
-void OTASCIIArmor::OTASCIIArmorPrivdp::encode_data(const ot_data_t& in,
-                                                   ot_data_t& out) const
-{
-
-    const ot_data_t input = in;
-    out.clear();
-    if (input.empty()) return;
-
-    CryptoPP::Base64Encoder base64Encoder;
-
-    try
-    {
-        base64Encoder.PutMessageEnd(&input.at(0), input.size());
-    }
-    catch (errBlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure \n");
-        throw std::exception(e);
-    }
-
-    out.resize(static_cast<size_t>(base64Encoder.TotalBytesRetrievable()));
-    out.resize(
-        base64Encoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
-}
-
-void OTASCIIArmor::OTASCIIArmorPrivdp::decode_data(const ot_data_t& in,
-                                                   ot_data_t& out) const
-{
-
-    const ot_data_t input = in;
-    out.clear();
-    if (input.empty()) return;
-
-    CryptoPP::Base64Decoder base64Decoder;
-
-    try
-    {
-        base64Decoder.PutMessageEnd(&input.at(0), input.size());
-    }
-    catch (errBlockingInputOnly e)
-    {
-        OT_FAIL_MSG("crypto++ failure \n");
-        throw std::exception(e);
-    }
-
-    out.resize(static_cast<size_t>(base64Decoder.TotalBytesRetrievable()));
-    out.resize(
-        base64Decoder.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
-}
 
 const char* OT_BEGIN_ARMORED = "-----BEGIN OT ARMORED";
 const char* OT_END_ARMORED = "-----END OT ARMORED";
@@ -689,7 +549,7 @@ bool OTASCIIArmor::SetAndPackStringMap(
 
     ot_data_t encoded_data;
 
-    this->dp->encode_data(packed_data, encoded_data);
+    OTCrypto::It()->encode_data_base64(packed_data, encoded_data);
 
     if (encoded_data.empty()) {
         otErr << "Error while base64_encoding in " << __FUNCTION__ << "\n";
@@ -786,7 +646,7 @@ bool OTASCIIArmor::SetAndPackData(const OTData& theData, bool bLineBreaks)
                                 pBuffer->GetData() + pBuffer->GetSize());
     ot_data_t encoded_data;
 
-    this->dp->encode_data(packed_data, encoded_data);
+    OTCrypto::It()->encode_data_base64(packed_data, encoded_data);
 
     if (encoded_data.empty()) {
         otErr << "Error while base64_encoding in " << __FUNCTION__ << "\n";
@@ -843,12 +703,12 @@ bool OTASCIIArmor::SetAndPackString(const OTString& strData,
     ot_data_t encoded_data;
     ot_data_t compressed_data;
 
-    this->dp->compress_data(packed_data, compressed_data);
+    OTCrypto::It()->compress_data_zlib(packed_data, compressed_data);
     if (compressed_data.empty()) {
         return false;
     }
 
-    this->dp->encode_data(compressed_data, encoded_data);
+    OTCrypto::It()->encode_data_base64(compressed_data, encoded_data);
     if (encoded_data.empty()) {
         return false;
     }
