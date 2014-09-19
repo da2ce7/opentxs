@@ -742,6 +742,36 @@ bool OTAsymmetricKey_OpenSSL::SaveCertToString(
 }
 
 // virtual
+bool OTAsymmetricKey_OpenSSL::SavePubkeyToString(
+    OTString& strOutput, const OTString* pstrReason,
+    const OTPassword* pImportPassword) const
+{
+    strOutput.Release();
+
+    auto key = const_cast<EVP_PKEY*>(dp->GetKey());
+
+    if (nullptr == key){
+        otErr << __FUNCTION__
+            << ": Error: Unexpected nullptr key. (Returning false.)\n";
+        return false;
+    }
+
+    OpenSSL_BIO bio_out_key = BIO_new(BIO_s_mem()); // we now have auto-cleanup
+
+    PEM_write_bio_PUBKEY(bio_out_key, key);
+
+    ot_data_t buffer_key(8192);
+
+    std::string str_key;
+    if (0 < BIO_read(bio_out_key, buffer_key.data(), buffer_key.size()))
+    {
+        str_key.assign(buffer_key.begin(), buffer_key.end());
+        strOutput = str_key.c_str();
+        return true;
+    }
+}
+
+// virtual
 bool OTAsymmetricKey_OpenSSL::SavePrivateKeyToString(
     OTString& strOutput, const OTString* pstrReason,
     const OTPassword* pImportPassword) const
@@ -796,6 +826,66 @@ bool OTAsymmetricKey_OpenSSL::SavePrivateKeyToString(
         buffer_pri[len] = '\0';
         strOutput.Set((const char*)buffer_pri); // so I can write this string to
                                                 // file in a sec... todo cast
+        bSuccess = true;
+    }
+    else
+        otErr << __FUNCTION__ << ": Error : key length is not 1 or more!";
+
+    return bSuccess;
+}
+
+// virtual
+bool OTAsymmetricKey_OpenSSL::SaveDecryptedPrivateKeyToString(
+    OTString& strOutput, const OTString* pstrReason,
+    const OTPassword* pImportPassword) const
+{
+    if (!IsPrivate()) {
+        otErr << __FUNCTION__ << ": Error: !IsPrivate() (This function should "
+            "only be called on a private key.)\n";
+        return false;
+    }
+
+    EVP_PKEY* pPrivateKey = dp->GetKeyLowLevel();
+    if (nullptr == pPrivateKey) {
+        otErr
+            << __FUNCTION__
+            << ": Error: Unexpected nullptr pPrivateKey. (Returning false.)\n";
+        return false;
+    }
+
+    OpenSSL_BIO bio_out_pri = BIO_new(BIO_s_mem());
+    bio_out_pri.setFreeOnly(); // only BIO_free(), not BIO_free_all();
+
+    OTPasswordData thePWData((nullptr != pstrReason)
+        ? pstrReason->Get()
+        : "OTAsymmetricKey_OpenSSL::"
+        "SavePrivateKeyToString is calling "
+        "PEM_write_bio_PrivateKey...");
+
+    if (nullptr == pImportPassword)
+        PEM_write_bio_PrivateKey(bio_out_pri, pPrivateKey, nullptr, nullptr, 0,
+        OTAsymmetricKey::GetPasswordCallback(),
+        &thePWData);
+    else
+        PEM_write_bio_PrivateKey(
+        bio_out_pri, pPrivateKey, nullptr, nullptr, 0, 0,
+        const_cast<void*>(
+        reinterpret_cast<const void*>(pImportPassword->getPassword())));
+
+    bool bSuccess = false;
+
+    int32_t len = 0;
+    uint8_t buffer_pri[4096] = ""; // todo hardcoded
+
+    // todo hardcoded 4080 (see array above.)
+    if (0 < (len = BIO_read(bio_out_pri, buffer_pri, 4080))) // returns number
+        // of bytes
+        // successfully
+        // read.
+    {
+        buffer_pri[len] = '\0';
+        strOutput.Set((const char*)buffer_pri); // so I can write this string to
+        // file in a sec... todo cast
         bSuccess = true;
     }
     else

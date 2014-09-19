@@ -216,7 +216,13 @@ public:
     virtual bool SaveCertToString(
         OTString& strOutput, const OTString* pstrReason = nullptr,
         const OTPassword* pImportPassword = nullptr) const;
+    virtual bool SavePubkeyToString(
+        OTString& strOutput, const OTString* pstrReason = nullptr,
+        const OTPassword* pImportPassword = nullptr) const;
     virtual bool SavePrivateKeyToString(
+        OTString& strOutput, const OTString* pstrReason = nullptr,
+        const OTPassword* pImportPassword = nullptr) const;
+    virtual bool SaveDecryptedPrivateKeyToString(
         OTString& strOutput, const OTString* pstrReason = nullptr,
         const OTPassword* pImportPassword = nullptr) const;
 

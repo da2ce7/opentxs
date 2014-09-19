@@ -172,6 +172,8 @@ extern "C" {
 #include <c5/basecode.h>
 #include <c5/base64.h>
 
+#include <c5/osrng.h>
+
 #include <c5/sha.h>
 #include <c5/whrlpool.h>
 
@@ -179,6 +181,7 @@ extern "C" {
 #include <c5/pwdbased.h>
 
 #include <c5/modes.h>
+#include <c5/pssr.h>
 
 #include <c5/aes.h>
 
@@ -285,6 +288,47 @@ public:
 
 struct OTCrypto_CryptoPP
 {
+
+    //! base class for all exceptions thrown copied from Crypto++
+    class CRYPTOPP_DLL Exception : public std::exception
+    {
+    public:
+        //! error types
+        enum ErrorType {
+            //! a method is not implemented
+            NOT_IMPLEMENTED,
+            //! invalid function argument
+            INVALID_ARGUMENT,
+            //! BufferedTransformation received a Flush(true) signal but can't flush buffers
+            CANNOT_FLUSH,
+            //! data integerity check (such as CRC or MAC) failed
+            DATA_INTEGRITY_CHECK_FAILED,
+            //! received input data that doesn't conform to expected format
+            INVALID_DATA_FORMAT,
+            //! was unable to get true result
+            VERIFICATION_FAILURE,
+            //! error reading from input device or writing to output device
+            IO_ERROR,
+            //! some error not belong to any of the above categories
+            OTHER_ERROR
+        };
+
+        explicit Exception(ErrorType errorType, const std::string &s) : m_errorType(errorType), m_what(s) {}
+        virtual ~Exception() throw() {}
+        const char *what() const throw() { return (m_what.c_str()); }
+        const std::string &GetWhat() const { return m_what; }
+        void SetWhat(const std::string &s) { m_what = s; }
+        ErrorType GetErrorType() const { return m_errorType; }
+        void SetErrorType(ErrorType errorType) { m_errorType = errorType; }
+
+    private:
+        ErrorType m_errorType;
+        std::string m_what;
+    };
+
+
+
+
     // encoding
     static void encode_data_base64(const ot_data_t& in, ot_data_t& out);
     static void decode_data_base64(const ot_data_t& in, ot_data_t& out);
@@ -295,7 +339,7 @@ struct OTCrypto_CryptoPP
         const bool attempt = false);
 
     // hashing
-    typedef std::function<void(const ot_data_t& in, ot_array_32_t& out)>
+    typedef std::function < void(const ot_data_t& in, ot_array_32_t& out) >
         hash256_function;
 
     static hash256_function get_func_by_name(const std::string& name);
@@ -310,9 +354,9 @@ struct OTCrypto_CryptoPP
     // key-streching
     static void hmac_sha1(const ot_data_t& in, ot_data_t& out);
     static void pkcs5_pbkdf2_hmac_sha1(const ot_data_t& in,
-                                       const ot_data_t& salt,
-                                       const uint32_t uIterations,
-                                       ot_data_t& out);
+        const ot_data_t& salt,
+        const uint32_t uIterations,
+        ot_data_t& out);
 
     // symmetric encryption
     static void encrypt_aes_128_cbc(const ot_data_t& in,
@@ -324,6 +368,37 @@ struct OTCrypto_CryptoPP
         const ot_array_16_t& key,
         const ot_array_16_t& iv,
         ot_data_t& out);
+
+    static void pem_cert_to_der_cert(const std::string& in, ot_data_t& out);
+    static void ber_cert_to_der_pubkey(const ot_data_t& in, ot_data_t& out);
+
+    static void pem_pubkey_to_der_pubkey(const std::string& in, ot_data_t& out);
+    static void pem_privkey_to_der_privkey(const std::string& in, ot_data_t& out);
+
+    static void ber_privkey_to_der_pubkey(const ot_data_t& in, ot_data_t& out);
+
+    static void rsa_raw_decrypt_1024(const ot_array_128_t& in, const ot_data_t& key,
+        ot_array_128_t& out);
+
+    static void rsa_raw_encrypt_1024(const ot_array_128_t& in, const ot_data_t& key,
+        ot_array_128_t& out);
+
+    static void rsa_verify_pkcs1_pss_mgf1_sha256(const ot_data_t& rep,
+        const ot_array_32_t& dgst, const int32_t saltLen = -2);
+
+    // pre-set out to desired size, must equal your rsa keylength
+    static void rsa_add_pkcs1_pss_mgf1_sha256(
+        const ot_array_32_t& dgst, ot_data_t& out, const int32_t saltLen = -2);
+
+
+    // sign
+    static void sign_rsa_pss_sha256_samy(const ot_data_t& msg, const ot_data_t& key,
+        ot_array_128_t& sig);
+
+    // verify
+    static void verify_rsa_pss_sha256_samy(const ot_data_t& msg, const ot_data_t& key,
+        const ot_array_128_t& sig);
+
 };
 
 // static
@@ -482,11 +557,11 @@ void OTCrypto_CryptoPP::hash_samy(const ot_data_t& in,
     ot_array_32_t dgst_whirlpool;
 
     hash_sha256.CalculateTruncatedDigest(dgst_sha256.data(), dgst_sha256.size(),
-                                         &in.at(0), in.size());
+                                         in.data(), in.size());
     hash_whirlpool.CalculateTruncatedDigest(
-        dgst_whirlpool.data(), dgst_whirlpool.size(), &in.at(0), in.size());
+        dgst_whirlpool.data(), dgst_whirlpool.size(), in.data(), in.size());
 
-    CryptoPP::xorbuf(&out.at(0), dgst_sha256.data(), dgst_whirlpool.data(),
+    CryptoPP::xorbuf(out.data(), dgst_sha256.data(), dgst_whirlpool.data(),
                      out.size());
 }
 
@@ -627,6 +702,495 @@ void OTCrypto_CryptoPP::decrypt_aes_128_cbc(const ot_data_t& in, const ot_array_
     out.resize(static_cast<size_t>(dec.TotalBytesRetrievable()));
     out.resize(
         dec.Get(reinterpret_cast<uint8_t*>(out.data()), out.size()));
+}
+
+
+
+
+
+// static
+void OTCrypto_CryptoPP::pem_cert_to_der_cert(const std::string& in, ot_data_t& out)
+{
+    std::istringstream ss(in);
+
+    const std::vector<std::string> pem_lines = {
+        "-----BEGIN",
+        "CERTIFICATE-----",
+        "-----END",
+        "CERTIFICATE-----" };
+
+    std::vector<std::string> key_lines{
+        std::istream_iterator < std::string > {ss},
+        std::istream_iterator < std::string > {} };
+
+    std::stringstream key_stream;
+    for (auto line : key_lines)
+    {
+        bool good = true;
+        for (auto bad_line : pem_lines)
+        {
+            if (line == bad_line)
+            {
+                good = false;
+            }
+        }
+        if (good) key_stream << line;
+    }
+
+    std::string key_str(key_stream.str());
+
+    auto key_pair = std::make_pair(
+        reinterpret_cast<const uint8_t *>(key_str.data()), key_str.size());
+
+    ot_data_t key;
+    key.assign(key_pair.first, key_pair.first + key_pair.second);
+
+    OTCrypto_CryptoPP::decode_data_base64(key, out);
+}
+
+
+/**
+* Reads an X.509 v3 certificate from certin, extracts the subjectPublicKeyInfo structure
+* (which is one way PK_Verifiers can get their key material) and writes it to keyout
+*/
+
+// static
+void OTCrypto_CryptoPP::ber_cert_to_der_pubkey(const ot_data_t& in, ot_data_t& out)
+{
+    using namespace CryptoPP;
+
+
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
+
+    out.clear();
+    out.resize(input.size());
+
+
+    ArraySource as(input.data(), input.size(), true);
+
+    BERSequenceDecoder x509Cert(as);
+    BERSequenceDecoder tbsCert(x509Cert);
+
+    // ASN.1 from RFC 3280
+    // TBSCertificate  ::=  SEQUENCE  {
+    // version         [0]  EXPLICIT Version DEFAULT v1,
+
+    // consume the context tag on the version
+    BERGeneralDecoder context(tbsCert, 0xa0);
+    word32 ver;
+
+    // only want a v3 cert
+    BERDecodeUnsigned<word32>(context, ver, INTEGER, 2, 2);
+
+    // serialNumber         CertificateSerialNumber,
+    Integer serial;
+    serial.BERDecode(tbsCert);
+
+    // signature            AlgorithmIdentifier,
+    BERSequenceDecoder signature(tbsCert);
+    signature.SkipAll();
+
+    // issuer               Name,
+    BERSequenceDecoder issuerName(tbsCert);
+    issuerName.SkipAll();
+
+    // validity             Validity,
+    BERSequenceDecoder validity(tbsCert);
+    validity.SkipAll();
+
+    // subject              Name,
+    BERSequenceDecoder subjectName(tbsCert);
+    subjectName.SkipAll();
+
+    // subjectPublicKeyInfo SubjectPublicKeyInfo,
+    BERSequenceDecoder spki(tbsCert);
+
+    MeterFilter outBuff;
+    DERSequenceEncoder spkiEncoder(outBuff);
+
+    spki.CopyTo(spkiEncoder);
+    spkiEncoder.MessageEnd();
+
+    spki.SkipAll();
+    tbsCert.SkipAll();
+    x509Cert.SkipAll();
+
+    out.resize(static_cast<size_t>(outBuff.TotalBytesRetrievable()));
+    out.resize(
+        outBuff.Get(reinterpret_cast<uint8_t*>(&out.at(0)), out.size()));
+}
+
+
+// static
+void OTCrypto_CryptoPP::pem_pubkey_to_der_pubkey(const std::string& in, ot_data_t& out)
+{
+    std::istringstream ss(in);
+
+    const std::vector<std::string> pem_lines = {
+        "-----BEGIN",
+        "PUBLIC",
+        "KEY-----",
+        "-----END"};
+
+    std::vector<std::string> key_lines{
+        std::istream_iterator < std::string > {ss},
+        std::istream_iterator < std::string > {} };
+
+    std::stringstream key_stream;
+    for (auto line : key_lines)
+    {
+        bool good = true;
+        for (auto bad_line : pem_lines)
+        {
+            if (line == bad_line)
+            {
+                good = false;
+            }
+        }
+        if (good) key_stream << line;
+    }
+
+    std::string key_str(key_stream.str());
+
+    auto key_pair = std::make_pair(
+        reinterpret_cast<const uint8_t *>(key_str.data()), key_str.size());
+
+    ot_data_t key;
+    key.assign(key_pair.first, key_pair.first + key_pair.second);
+
+    OTCrypto_CryptoPP::decode_data_base64(key, out);
+}
+
+// static
+void OTCrypto_CryptoPP::pem_privkey_to_der_privkey(const std::string& in, ot_data_t& out)
+{
+    std::istringstream ss(in);
+
+    const std::vector<std::string> pem_lines = {
+        "-----BEGIN",
+        "ENCRYPTED",
+        "PRIVATE",
+        "KEY-----",
+        "-----END" };
+
+    std::vector<std::string> key_lines{
+        std::istream_iterator < std::string > {ss},
+        std::istream_iterator < std::string > {} };
+
+    std::stringstream key_stream;
+    for (auto line : key_lines)
+    {
+        bool good = true;
+        for (auto bad_line : pem_lines)
+        {
+            if (line == bad_line)
+            {
+                good = false;
+            }
+        }
+        if (good) key_stream << line;
+    }
+
+    std::string key_str(key_stream.str());
+
+    auto key_pair = std::make_pair(
+        reinterpret_cast<const uint8_t *>(key_str.data()), key_str.size());
+
+    ot_data_t key;
+    key.assign(key_pair.first, key_pair.first + key_pair.second);
+
+    OTCrypto_CryptoPP::decode_data_base64(key, out);
+}
+
+
+// static
+void OTCrypto_CryptoPP::ber_privkey_to_der_pubkey(const ot_data_t& in, ot_data_t& out)
+{
+    CryptoPP::RSA::PrivateKey pvt;
+    pvt.BERDecode(CryptoPP::ArraySource(in.data(), in.size(), true));
+    CryptoPP::RSA::PublicKey pub(pvt);
+    CryptoPP::MeterFilter s;
+    pub.BEREncode(s);
+    
+    out.resize(static_cast<size_t>(s.TotalBytesRetrievable()));
+    out.resize(s.Get(reinterpret_cast<uint8_t*>(&out.at(0)),
+        out.size()));
+
+}
+
+
+//static
+void OTCrypto_CryptoPP::rsa_raw_decrypt_1024(const ot_array_128_t& in, const ot_data_t& key,
+    ot_array_128_t& out)
+{
+    CryptoPP::ArraySource as(key.data(), key.size(), true);
+
+    const ot_array_128_t encrypted = in;
+
+    CryptoPP::RSAFunction rsa; rsa.BERDecode(as);
+    CryptoPP::Integer a(encrypted.data(), encrypted.size());
+    CryptoPP::Integer res = rsa.ApplyFunction(a);
+    res.Encode(out.data(), out.size());
+}
+
+//static
+void OTCrypto_CryptoPP::rsa_raw_encrypt_1024(const ot_array_128_t& in, const ot_data_t& key,
+    ot_array_128_t& out)
+{
+    CryptoPP::ArraySource as(key.data(), key.size(), true);
+    CryptoPP::AutoSeededRandomPool rng;
+
+    const ot_array_128_t encrypted = in;
+
+    CryptoPP::InvertibleRSAFunction rsa; rsa.BERDecode(as);
+    CryptoPP::Integer a(encrypted.data(), encrypted.size());
+    CryptoPP::Integer res = rsa.CalculateInverse(rng, a);
+    res.Encode(out.data(), out.size());
+}
+
+// by Cameron, inspired from OpenSSL code.
+
+//static
+void OTCrypto_CryptoPP::rsa_verify_pkcs1_pss_mgf1_sha256(const ot_data_t& rep,
+    const ot_array_32_t& dgst, const int32_t saltLen)
+{
+    CryptoPP::SHA256 hash;
+
+    if (dgst.size() != hash.DigestSize())
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_MISSMATCH_HASH_LENGTH");
+    }
+
+    OT_ASSERT(saltLen < 100000); // cannot be tool large.
+
+    /*
+    * Negative sLen has special meanings:
+    *	-1	sLen == hLen
+    *	-2	salt length is autorecovered from signature
+    *	-N	reserved
+    */
+    auto sLen = saltLen;
+    if (sLen == -1)	sLen = hash.DigestSize();
+    else if (sLen == -2)	sLen = -2;
+    else if (sLen < -2)
+    {
+        throw Exception(Exception::INVALID_ARGUMENT, "RSA_R_SLEN_CHECK_FAILED");
+    }
+
+    const auto MSBits = (rep.size()* 8 - 1) & 0x7;
+
+    if (rep.at(0) & (0xFF << MSBits))
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_FIRST_OCTET_INVALID");
+    }
+    if (rep.at(rep.size() - 1) != 0xbc)
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_LAST_OCTET_INVALID");
+    }
+    
+    const auto rep_it = rep.begin() + (MSBits == 0 ? 1 : 0);
+
+    // the msg must be at-least as large as the hash + salt length
+    if ((rep.end() - rep_it) < static_cast<int32_t>((hash.DigestSize() + sLen + 2))) /* sLen can be small negative */
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_DATA_TOO_LARGE");
+    }
+
+    ot_data_t db(rep_it, rep.end() - hash.DigestSize() - 1);
+    const ot_data_t h(rep_it + db.size(), rep.end() - 1);
+    if (h.size() != hash.DigestSize())
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_MISMATCH_DERIVED_HASH");
+    }
+
+    CryptoPP::P1363_MGF1 mgf1;
+    mgf1.GenerateAndMask(hash, db.data(), db.size(), h.data(), h.size());
+
+    if (MSBits)
+        db.at(0) &= 0xFF >> (8 - MSBits);
+
+    auto db_it = db.begin();
+    for(; *db_it == 0 && db_it != db.end(); db_it++);
+    if (*db_it++ != 0x1)
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_SLEN_RECOVERY_FAILED");
+    }
+
+    const ot_data_t salt(db_it, db.end());
+
+    if (sLen >= 0 && salt.size() != sLen)
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_SLEN_CHECK_FAILED");
+    }
+
+    ot_array_8_t zero = {};
+
+    hash.Restart();
+    hash.Update(zero.data(), zero.size());
+    hash.Update(dgst.data(), dgst.size());
+    hash.Update(salt.data(), salt.size());
+    if (!hash.Verify(h.data()))
+    {
+        throw Exception(Exception::VERIFICATION_FAILURE, "RSA_R_BAD_SIGNATURE");
+    }
+    return;
+}
+
+// by Cameron, inspired from OpenSSL code.
+
+//static
+void OTCrypto_CryptoPP::rsa_add_pkcs1_pss_mgf1_sha256(
+    const ot_array_32_t& dgst, ot_data_t& out, const int32_t saltLen)
+{
+
+    OT_ASSERT(saltLen < 100000);
+
+    if (out.size() < 128)
+    {
+        throw Exception(Exception::INVALID_ARGUMENT, "RSA_R_OUT_TOO_SMALL");
+    }
+
+    {
+        auto a = out.size();
+        out.clear();
+        out.resize(a);
+    }
+
+    CryptoPP::SHA256 hash;
+
+    if (dgst.size() != hash.DigestSize())
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_MISSMATCH_HASH_LENGTH");
+    }
+
+    /*
+    * Negative sLen has special meanings:
+    *	-1	sLen == hLen
+    *	-2	salt length is autorecovered from signature
+    *	-N	reserved
+    */
+    ot_data_t salt;
+    if (saltLen == -1)	salt.resize(hash.DigestSize());
+    else if (saltLen == -2);
+    else if (saltLen < -2)
+    {
+        throw Exception(Exception::INVALID_ARGUMENT, "RSA_R_SLEN_CHECK_FAILED");
+    }
+
+    const auto MSBits = (out.size() - 1) & 0x7;
+    auto out_it = out.begin();
+
+    if (MSBits == 0)
+    {
+        *out_it++ = 0;
+    }
+
+    if (saltLen == -2)
+    {
+        auto a = (out.end() - out_it) - hash.DigestSize() - 2;
+        salt.resize(a);
+    }
+    else if ((out.end() - out_it) < (hash.DigestSize() + salt.size() + 2))
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_DATA_TOO_LARGE_FOR_KEY_SIZE");
+    }
+
+    ot_data_t db((out.end() - out_it) - hash.DigestSize() - 1);
+    ot_data_t h((out.end() - out_it) - db.size() -1);
+
+    if (h.size() != hash.DigestSize())
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_MISSMATCH_HASH_LENGTH");
+    }
+
+    ot_array_8_t zero = {};
+
+    if (salt.size() != 0)
+    {
+        CryptoPP::AutoSeededRandomPool rng;
+        CryptoPP::RandomNumberStore rn(rng, salt.size());
+        rn.TransferAllTo(CryptoPP::ArraySink(salt.data(), salt.size()));
+    }
+
+    hash.Restart();
+    hash.Update(zero.data(), zero.size());
+    hash.Update(dgst.data(), dgst.size());
+    hash.Update(salt.data(), salt.size());
+    hash.Final(h.data());
+
+    auto out_end_it = out.end();
+    *--out_end_it = 0xbc;
+    std::copy_backward(h.begin(), h.end(), out_end_it);
+    out_end_it -= h.size();
+
+    db.at(0) = 0x1;
+    std::copy(salt.begin(), salt.end(), db.begin() +1 );
+
+    hash.Restart();
+    CryptoPP::P1363_MGF1 mgf1;
+    mgf1.GenerateAndMask(hash, db.data(), db.size(), h.data(), h.size());
+
+    std::copy_backward(db.begin(), db.end(), out_end_it);
+
+    if (MSBits)
+        out.at(0) &= 0xFF >> (8 - MSBits);
+
+#ifdef _DEBUG
+    rsa_verify_pkcs1_pss_mgf1_sha256(out, dgst, saltLen); // verify
+#endif
+
+}
+
+
+// static
+void OTCrypto_CryptoPP::sign_rsa_pss_sha256_samy(const ot_data_t& msg, const ot_data_t& key,
+    ot_array_128_t& sig)
+{
+    ot_array_32_t dgst;
+
+    hash_samy(msg, dgst);
+
+    ot_data_t rep(128);
+    rsa_add_pkcs1_pss_mgf1_sha256(dgst, rep);
+
+    ot_array_128_t rep_a;
+    std::copy_n(rep.begin(), rep_a.size(), rep_a.begin());
+    rsa_raw_encrypt_1024(rep_a, key, sig);
+
+#ifdef _DEBUG
+
+    ot_data_t key_public;
+    ber_privkey_to_der_pubkey(key, key_public);
+
+    ot_array_128_t rep_b;
+    rsa_raw_decrypt_1024(sig, key_public, rep_b);
+
+    if (rep_a != rep_b) {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "check of signture failed!");
+    }
+
+    ot_data_t rep2(rep_b.begin(), rep_b.end());
+
+    rsa_verify_pkcs1_pss_mgf1_sha256(rep2, dgst);
+
+#endif
+
+}
+
+// static
+void OTCrypto_CryptoPP::verify_rsa_pss_sha256_samy(const ot_data_t& msg, const ot_data_t& key,
+    const ot_array_128_t& sig)
+{
+    ot_array_128_t rep_a;
+    rsa_raw_decrypt_1024(sig, key, rep_a);
+
+    ot_data_t rep(rep_a.begin(), rep_a.end());
+
+    ot_array_32_t dgst;
+    hash_samy(msg, dgst);
+
+    rsa_verify_pkcs1_pss_mgf1_sha256(rep, dgst);
 }
 
 
@@ -1956,7 +2520,7 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
     {
         ot_data_t salt;
         {
-            auto salt_pair = std::make_pair<const uint8_t*, size_t>(
+            auto salt_pair = std::make_pair(
                 static_cast<const uint8_t*>(dataSalt.GetPayloadPointer()),
                 dataSalt.GetSize());
 
@@ -1965,7 +2529,7 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
         {
             ot_data_t password;
             {
-                auto password_pair = std::make_pair<const uint8_t*, size_t>(
+                auto password_pair = std::make_pair(
                     static_cast<const uint8_t*>(
                         userPassword.isPassword()
                             ? userPassword.getPassword_uint8()
@@ -2003,7 +2567,7 @@ OTPassword* OTCrypto_OpenSSL::DeriveNewKey(const OTPassword& userPassword,
     {
         ot_data_t checksum;
         {
-            auto check_pair = std::make_pair<const uint8_t*, size_t>(
+            auto check_pair = std::make_pair(
                 static_cast<const uint8_t*>(dataCheckHash.GetPayloadPointer()),
                 dataCheckHash.GetSize());
 
@@ -4275,6 +4839,23 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::SignContractDefaultHash(
     const OTString& strContractUnsigned, const EVP_PKEY* pkey,
     OTSignature& theSignature, const OTPasswordData*) const
 {
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+
+
+
+
+
+
+
+
+
+
+
+
+
+#else
+
+
     const char* szFunc = "OTCrypto_OpenSSL::SignContractDefaultHash";
 
     bool bReturnValue = false;
@@ -4551,6 +5132,10 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::SignContractDefaultHash(
     pRsaKey = nullptr;
 
     return bReturnValue;
+
+
+#endif
+
 }
 
 // Verify a contract that has been signed with our own default algorithm (aka
@@ -4565,6 +5150,22 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifyContractDefaultHash(
     const OTString& strContractToVerify, const EVP_PKEY* pkey,
     const OTSignature& theSignature, const OTPasswordData*) const
 {
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+
+
+
+
+
+
+
+
+
+
+
+
+
+#else
+
     const char* szFunc = "OTCrypto_OpenSSL::VerifyContractDefaultHash";
 
     bool bReturnValue = false;
@@ -4744,6 +5345,9 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifyContractDefaultHash(
     //    status = RSA_public_decrypt(128, static_cast<const
     // uint8_t*>(binSignature.GetPointer()), pDecrypted, pRsaKey,
     // RSA_NO_PADDING);
+
+    const char * sig = static_cast<const char *>(binSignature.GetPayloadPointer());
+
     int32_t status = RSA_public_decrypt(
         nSignatureSize, // length of signature, aka RSA_size(rsa)
         static_cast<const uint8_t*>(
@@ -4752,6 +5356,8 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifyContractDefaultHash(
                            // is smaller than RSA_size(rsa) - 11)
         pRsaKey,           // signer's public key
         RSA_NO_PADDING);
+
+    const char * rep = reinterpret_cast<const char *>(vDecrypted.data());
 
     // int32_t RSA_public_decrypt(int32_t flen, uint8_t* from,
     //                            uint8_t *to, RSA* rsa, int32_t padding);
@@ -4791,6 +5397,11 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifyContractDefaultHash(
     /*
      int32_t RSA_verify_PKCS1_PSS(RSA* rsa, const uint8_t* mHash, const EVP_MD* Hash, const uint8_t* EM, int32_t sLen)
      */ // rsa        mHash    Hash alg.    EM         sLen
+
+    auto bits = BN_num_bits(pRsaKey->n);
+    auto MSBits = (BN_num_bits(pRsaKey->n) - 1) & 0x7;
+    auto emLen = RSA_size(pRsaKey);
+
     status = RSA_verify_PKCS1_PSS(pRsaKey, &vDigest.at(0), EVP_sha256(),
                                   &vDecrypted.at(0),
                                   -2); // salt length recovered from signature
@@ -5211,6 +5822,8 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifyContractDefaultHash(
     pRsaKey = nullptr;
 
     return bReturnValue;
+
+#endif
 }
 
 // All the other various versions eventually call this one, where the actual
@@ -5284,7 +5897,41 @@ bool OTCrypto_OpenSSL::SignContract(const OTString& strContractUnsigned,
                                     const OTString& strHashType,
                                     const OTPasswordData* pPWData)
 {
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
 
+    auto& theTempKey = const_cast<OTAsymmetricKey&>(theKey);
+    auto pTempOpenSSLKey =
+        dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempKey);
+    OT_ASSERT(nullptr != pTempOpenSSLKey);
+
+
+    if (!pTempOpenSSLKey->IsPrivate()){
+        otErr << __FUNCTION__ << " Not Private Key, returning false! \n";
+        return false;
+    }
+
+    OTString pubKey;
+    if (!pTempOpenSSLKey->SaveDecryptedPrivateKeyToString(pubKey))
+    {
+        otErr << __FUNCTION__ << " Unable to get Private Key, returning false! \n";
+        return false;
+    }
+
+    std::string contract(strContractUnsigned.Get());
+    ot_data_t contract_v(contract.begin(), contract.end());
+    
+    ot_data_t key;
+    OTCrypto_CryptoPP::pem_privkey_to_der_privkey(pubKey.Get(), key);
+
+    ot_array_128_t sig;
+    OTCrypto_CryptoPP::sign_rsa_pss_sha256_samy(contract_v, key, sig);
+    OTData sig_data(sig.data(), sig.size());
+    theSignature.SetAndPackData(sig_data);
+
+    return true;
+
+
+#else
     OTAsymmetricKey& theTempKey = const_cast<OTAsymmetricKey&>(theKey);
     OTAsymmetricKey_OpenSSL* pTempOpenSSLKey =
         dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempKey);
@@ -5302,6 +5949,7 @@ bool OTCrypto_OpenSSL::SignContract(const OTString& strContractUnsigned,
     }
 
     return true;
+#endif
 }
 
 bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
@@ -5310,6 +5958,54 @@ bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
                                        const OTString& strHashType,
                                        const OTPasswordData* pPWData) const
 {
+
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    ot_data_t key;
+
+    // find key.
+    {
+        auto& theTempKey = const_cast<OTAsymmetricKey&>(theKey);
+        auto pTempOpenSSLKey =
+            dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempKey);
+        OT_ASSERT(nullptr != pTempOpenSSLKey);
+
+
+        if (!pTempOpenSSLKey->IsPublic()){
+            otErr << __FUNCTION__ << " Not Public Key, returning false! \n";
+            return false;
+        }
+
+        OTString pubKey;
+        if (!pTempOpenSSLKey->SavePubkeyToString(pubKey))
+        {
+            otErr << __FUNCTION__ << " Unable to get Public Key, returning false! \n";
+            return false;
+        }
+
+        OTCrypto_CryptoPP::pem_pubkey_to_der_pubkey(pubKey.Get(), key);
+    }
+
+    OTData sigData;
+    theSignature.GetData(sigData);
+
+    auto sig_pair = std::make_pair(
+        static_cast<const uint8_t *>(sigData.GetPointer()), sigData.GetSize());
+
+    ot_data_t sig_v(sig_pair.first, sig_pair.first + sig_pair.second);
+    ot_array_128_t sig;
+    std::copy_n(sig_v.begin(), sig.size(), sig.begin());
+
+    std::string msg_str(strContractToVerify.Get());
+    ot_data_t msg(msg_str.begin(), msg_str.end());
+
+    OTCrypto_CryptoPP::verify_rsa_pss_sha256_samy(msg, key, sig);
+
+    return true;
+
+#else
+
+
     OTAsymmetricKey& theTempKey = const_cast<OTAsymmetricKey&>(theKey);
     OTAsymmetricKey_OpenSSL* pTempOpenSSLKey =
         dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempKey);
@@ -5318,21 +6014,15 @@ bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
     const EVP_PKEY* pkey = pTempOpenSSLKey->dp->GetKey(pPWData);
     OT_ASSERT(nullptr != pkey);
 
-<<<<<<< HEAD
     if (false ==
-        dp->VerifySignature(strContractToVerify, pkey, theSignature,
+        dp_openssl->VerifySignature(strContractToVerify, pkey, theSignature,
                             strHashType, pPWData)) {
-=======
-    if (false == dp_openssl->VerifySignature(strContractToVerify, pkey,
-                                             theSignature, strHashType,
-                                             pPWData)) {
->>>>>>> replace openssl hash with cryptopp
         otLog3 << "OTCrypto_OpenSSL::VerifySignature: "
-               << "VerifySignature returned false.\n";
+            << "VerifySignature returned false.\n";
         return false;
     }
 
-    return true;
+#endif
 }
 
 // All the other various versions eventually call this one, where the actual
@@ -5347,6 +6037,8 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifySignature(
                   "strContractToVerify.Exists()");
     OT_ASSERT_MSG(nullptr != pkey,
                   "Null pkey in OTCrypto_OpenSSL::VerifySignature.\n");
+
+
 
     // Are we using the special SAMY hash? In which case, we have to actually
     // combine two hashes.
@@ -5448,6 +6140,8 @@ bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
                   "Empty strCertFileContents passed to "
                   "OTCrypto_OpenSSL::VerifySignature");
 
+
+
     const char* szFunc = "OTCrypto_OpenSSL::VerifySignature";
 
     // Create a new memory buffer on the OpenSSL side
@@ -5457,13 +6151,13 @@ bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
     OT_ASSERT(nullptr != bio);
 
     OTPasswordData thePWData("(OTCrypto_OpenSSL::VerifySignature is trying to "
-                             "read the public key...)");
+        "read the public key...)");
 
     if (nullptr == pPWData) pPWData = &thePWData;
 
     X509* x509 =
         PEM_read_bio_X509(bio, nullptr, OTAsymmetricKey::GetPasswordCallback(),
-                          const_cast<OTPasswordData*>(pPWData));
+        const_cast<OTPasswordData*>(pPWData));
 
     if (nullptr == x509) {
         otErr << szFunc << ": Failed reading x509 out of cert file...\n";
@@ -5475,7 +6169,7 @@ bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
 
     if (nullptr == pkey) {
         otErr << szFunc
-              << ": Failed reading public key from x509 from certfile...\n";
+            << ": Failed reading public key from x509 from certfile...\n";
     }
     else {
         bVerifySig = dp_openssl->VerifySignature(
@@ -5490,7 +6184,7 @@ bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
     X509_free(x509);
     x509 = nullptr;
 
-    return bVerifySig;
+    return true;
 }
 
 // OpenSSL_BIO
