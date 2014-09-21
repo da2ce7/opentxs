@@ -135,12 +135,7 @@
 
 #include "../OTString.hpp"
 
-#include <string>
-#include <iostream>
-#include <fstream>
-#include <cinttypes>
 #include <memory>
-#include <map>
 
 namespace opentxs
 {
@@ -174,14 +169,9 @@ extern const char* OT_BEGIN_SIGNED_escaped;
 // The constructors assume that you are passing in a base64-encoded string.
 class OTASCIIArmor : public OTString
 {
-private:
-    class OTASCIIArmorPrivdp;
-    std::unique_ptr<OTASCIIArmorPrivdp> dp;
-
-    static OTDB::OTPacker& GetPacker();
-    static std::unique_ptr<OTDB::OTPacker> s_pPacker;
-
 public:
+    static OTDB::OTPacker* GetPacker();
+
     EXPORT OTASCIIArmor();
     EXPORT OTASCIIArmor(const char* szValue);
     EXPORT OTASCIIArmor(const OTData& theValue);
@@ -289,6 +279,9 @@ public:
     EXPORT bool SetAndPackStringMap(
         const std::map<std::string, std::string>& the_map,
         bool bLineBreaks = true);
+
+private:
+    static std::unique_ptr<OTDB::OTPacker> s_pPacker;
 };
 
 } // namespace opentxs

@@ -2265,6 +2265,8 @@ char* OTCrypto_OpenSSL::Base64Encode(const uint8_t* input, int32_t in_len,
     ot_data_t inout(input, input + in_len);
     OTCrypto_CryptoPP::encode_data_base64(inout, inout);
 
+    inout.push_back(0);
+
     auto out = new uint8_t[inout.size()];
 
     std::copy(inout.begin(), inout.end(), out);
