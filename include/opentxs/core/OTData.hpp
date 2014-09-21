@@ -134,6 +134,7 @@
 #define OPENTXS_CORE_OTDATA_HPP
 
 #include <cinttypes>
+#include <vector>
 
 namespace opentxs
 {
@@ -158,6 +159,14 @@ public:
 
     EXPORT void Release_Data();
     void SetSize(uint32_t size);
+
+    inline std::vector<uint8_t> GetDataCopy() const
+    {
+        return std::vector<uint8_t>(
+            static_cast<uint8_t*>(data_),
+            static_cast<uint8_t*>(data_)+size_);
+    }
+
 
     inline const void* GetPointer() const
     {

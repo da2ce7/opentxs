@@ -390,7 +390,6 @@ struct OTCrypto_CryptoPP
     static void rsa_add_pkcs1_pss_mgf1_sha256(
         const ot_array_32_t& dgst, ot_data_t& out, const int32_t saltLen = -2);
 
-
     // sign
     static void sign_rsa_pss_sha256_samy(const ot_data_t& msg, const ot_data_t& key,
         ot_array_128_t& sig);
@@ -4105,57 +4104,9 @@ EVP_OpenFinal() returns 0 if the decrypt failed or 1 for success.
 // RSA / AES
 
 bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
-                            OTString& theOutput,
-                            const OTPasswordData* pPWData) const
+    OTString& theOutput,
+    const OTPasswordData* pPWData) const
 {
-    const char* szFunc = "OTCrypto_OpenSSL::Open";
-
-    uint8_t buffer[4096];
-    uint8_t buffer_out[4096 + EVP_MAX_IV_LENGTH];
-    uint8_t iv[EVP_MAX_IV_LENGTH];
-
-    uint32_t len = 0;
-    int32_t len_out = 0;
-    bool bFinalized = false; // We only clean up the ctx if the Open "Final"
-                             // function hasn't been called, since it does that
-                             // automatically already.
-
-    memset(buffer, 0, 4096);
-    memset(buffer_out, 0, 4096 + EVP_MAX_IV_LENGTH);
-    memset(iv, 0, EVP_MAX_IV_LENGTH);
-
-    // theOutput is where we'll put the decrypted result.
-    //
-    theOutput.Release();
-
-    // Grab the NymID of the recipient, so we can find his session
-    // key (there might be symmetric keys for several Nyms, not just this
-    // one, and we need to find the right one in order to perform this Open.)
-    //
-    OTString strNymID;
-    theRecipient.GetIdentifier(strNymID);
-
-    OTAsymmetricKey& theTempPrivateKey =
-        const_cast<OTAsymmetricKey&>(theRecipient.GetPrivateEncrKey());
-
-    OTAsymmetricKey_OpenSSL* pPrivateKey =
-        dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempPrivateKey);
-    OT_ASSERT(nullptr != pPrivateKey);
-
-    EVP_PKEY* private_key =
-        const_cast<EVP_PKEY*>(pPrivateKey->dp->GetKey(pPWData));
-
-    if (nullptr == private_key) {
-        otErr << szFunc
-              << ": Null private key on recipient. (Returning false.)\n";
-        return false;
-    }
-    else
-        otLog5 << __FUNCTION__
-               << ": Private key is available for NymID: " << strNymID << " \n";
-
-    EVP_CIPHER_CTX ctx;
-
     class _OTEnv_Open
     {
     private:
@@ -4166,7 +4117,7 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
 
     public:
         _OTEnv_Open(const char* param_szFunc, EVP_CIPHER_CTX& theCTX,
-                    OTAsymmetricKey& param_privateKey, bool& param_Finalized)
+            OTAsymmetricKey& param_privateKey, bool& param_Finalized)
             : m_szFunc(param_szFunc)
             , m_ctx(theCTX)
             , m_privateKey(param_privateKey)
@@ -4192,489 +4143,302 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
             if (!m_bFinalized) {
                 if (0 == EVP_CIPHER_CTX_cleanup(&m_ctx))
                     otErr << m_szFunc << ": Failure in EVP_CIPHER_CTX_cleanup. "
-                                         "(It returned 0.)\n";
+                    "(It returned 0.)\n";
             }
 
             m_szFunc = nullptr;
         }
     };
 
-    // INSTANTIATE the clean-up object.
+
+    bool bFinalized = false; // We only clean up the ctx if the Open "Final"
+    // function hasn't been called, since it does that
+    // automatically already.
+
+
+    // Grab the NymID of the recipient, so we can find his session
+    // key (there might be symmetric keys for several Nyms, not just this
+    // one, and we need to find the right one in order to perform this Open.)
     //
-    _OTEnv_Open theNestedInstance(szFunc, ctx, *pPrivateKey, bFinalized);
-
-    dataInput.reset(); // Reset the fread position on this object to 0.
-
-    uint32_t nRunningTotal =
-        0; // Everytime we read something, we add the length to this variable.
-
-    uint32_t nReadEnvType = 0;
-    uint32_t nReadArraySize = 0;
-    uint32_t nReadIV = 0;
-
-    // Read the ARRAY SIZE (network order version -- convert to host version.)
-
-    // Loop through the array of encrypted symmetric keys, and for each:
-    //      read its network-order NymID size (convert to host version), and
-    // then read its NymID,
-    //      read its network-order key content size (convert to host), and then
-    // read its key content,
-
-    //
-    // Read network-order IV size (convert to host version) before then reading
-    // IV itself.
-    // (Then update encrypted blocks until evp open final...)
-    //
-
-    // So here we go...
-
-    //
-    // Read the ENVELOPE TYPE (as network order version -- and convert to host
-    // version.)
-    //
-    // 0 == Error
-    // 1 == Asymmetric Key  (this function -- Seal / Open)
-    // 2 == Symmetric Key   (other functions -- Encrypt / Decrypt use this.)
-    // Anything else: error.
-    //
-    uint16_t env_type_n = 0;
-
-    if (0 == (nReadEnvType = dataInput.OTfread(
-                  reinterpret_cast<uint8_t*>(&env_type_n),
-                  static_cast<uint32_t>(sizeof(env_type_n))))) {
-        otErr << szFunc << ": Error reading Envelope Type. Expected "
-                           "asymmetric(1) or symmetric (2).\n";
-        return false;
+    std::string our_nym_id;
+    {
+        OTString nymID;
+        theRecipient.GetIdentifier(nymID);
+        our_nym_id = nymID.Get();
     }
-    nRunningTotal += nReadEnvType;
-    OT_ASSERT(nReadEnvType == static_cast<uint32_t>(sizeof(env_type_n)));
 
-    // convert that envelope type from network to HOST endian.
-    //
-    const uint16_t env_type =
-        static_cast<uint16_t>(ntohs(static_cast<uint16_t>(env_type_n)));
-    //  nRunningTotal += env_type;    // NOPE! Just because envelope type is 1
-    // or 2, doesn't mean we add 1 or 2 extra bytes to the length here. Nope!
+    auto & theTempPrivateKey =
+        const_cast<OTAsymmetricKey&>(theRecipient.GetPrivateEncrKey());
 
-    if (1 != env_type) {
-        otErr << szFunc << ": Error : Expected Envelope for Asymmetric "
-                           "key(type 1) but instead found type "
-              << static_cast<int32_t>(env_type) << ".\n";
-        print_stacktrace();
+    auto pPrivateKey =
+        dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempPrivateKey);
+    OT_ASSERT(nullptr != pPrivateKey);
+
+    auto private_key =
+        const_cast<EVP_PKEY*>(pPrivateKey->dp->GetKey(pPWData));
+
+    if (nullptr == private_key) {
+        otErr << __FUNCTION__
+            << ": Null private key on recipient. (Returning false.)\n";
         return false;
     }
     else
         otLog5 << __FUNCTION__
-               << ": Envelope type: " << static_cast<int32_t>(env_type) << "\n";
+        << ": Private key is available for NymID: " << our_nym_id << " \n";
 
-    // Read the ARRAY SIZE (network order version -- convert to host version.)
-    //
-    uint32_t array_size_n = 0;
+    auto data = dataInput.GetDataCopy();
+    auto data_it = data.begin();
 
-    if (0 == (nReadArraySize = dataInput.OTfread(
-                  reinterpret_cast<uint8_t*>(&array_size_n),
-                  static_cast<uint32_t>(sizeof(array_size_n))))) {
-        otErr << szFunc
-              << ": Error reading Array Size for encrypted symmetric keys.\n";
-        return false;
-    }
-    nRunningTotal += nReadArraySize;
-    OT_ASSERT(nReadArraySize == static_cast<uint32_t>(sizeof(array_size_n)));
-
-    // convert that array size from network to HOST endian.
-    //
-    const uint32_t array_size = ntohl(array_size_n);
-
-    otLog5 << __FUNCTION__
-           << ": Array size: " << static_cast<int64_t>(array_size) << "\n";
-
-    //  nRunningTotal += array_size;    // NOPE! Just because there are 10 array
-    // elements doesn't mean I want to add "10" here to the running total!! Not
-    // logical.
-
-    // We are going to loop through all the keys and load each up (then delete.)
-    // Each one is proceeded by its length.
-    // IF we find the one we are looking for, then we set it onto this variable,
-    // theRawEncryptedKey, so we have it available below this loop.
-    //
-    OTPayload theRawEncryptedKey;
-    bool bFoundKeyAlready =
-        false; // If we find it during the loop below, we'll set this to true.
-
-    // Loop through as we read the encrypted symmetric keys, and for each:
-    //      read its network-order NymID size (convert to host version), and
-    // then read its NymID,
-    //      read its network-order key content size (convert to host), and then
-    // read its key content,
-    //
-    for (uint32_t ii = 0; ii < array_size; ++ii) {
-
-        // Loop through the encrypted symmetric keys, and for each:
-        //      read its network-order NymID size (convert to host version), and
-        // then read its NymID,
-        //      read its network-order key content size (convert to host), and
-        // then read its key content.
-
-        uint32_t nymid_len_n = 0;
-        uint32_t nReadNymIDSize = 0;
-
-        if (0 == (nReadNymIDSize = dataInput.OTfread(
-                      reinterpret_cast<uint8_t*>(&nymid_len_n),
-                      static_cast<uint32_t>(sizeof(nymid_len_n))))) {
-            otErr << szFunc << ": Error reading NymID length for an encrypted "
-                               "symmetric key.\n";
-            return false;
-        }
-        nRunningTotal += nReadNymIDSize;
-        OT_ASSERT(nReadNymIDSize == static_cast<uint32_t>(sizeof(nymid_len_n)));
-
-        // convert that array size from network to HOST endian.
-        //
-        uint32_t nymid_len = static_cast<uint32_t>(ntohl(static_cast<uint32_t>(
-            nymid_len_n))); // FYI: ntohl returns uint32_t !!!!!
-
-        otLog5 << __FUNCTION__
-               << ": NymID length: " << static_cast<int64_t>(nymid_len) << "\n";
-
-        //      nRunningTotal += nymid_len; // Nope!
-
-        uint8_t* nymid =
-            static_cast<uint8_t*>(malloc(sizeof(uint8_t) * nymid_len));
-        OT_ASSERT(nullptr != nymid);
-        nymid[0] = '\0'; // null terminator.
-
-        uint32_t nReadNymID = 0;
-
-        if (0 == (nReadNymID = dataInput.OTfread(
-                      reinterpret_cast<uint8_t*>(nymid),
-                      static_cast<uint32_t>(sizeof(uint8_t) *
-                                            nymid_len)))) // this length
-                                                          // includes the null
-                                                          // terminator (it was
-                                                          // written that way.)
+    // Envelope Type (only 1, for now).
+    uint16_t env_type = 0;
+    {
         {
-            otErr << szFunc
-                  << ": Error reading NymID for an encrypted symmetric key.\n";
-            free(nymid);
-            nymid = nullptr;
+            ot_data_t v(sizeof(env_type));
+
+            for (auto &a : v) {
+                if (data_it == data.end()) return false;
+                a = *data_it++;
+            }
+            env_type = ntohs(*reinterpret_cast<uint16_t *>(v.data()));
+        }
+
+        if (1 != env_type) {
+            otErr << __FUNCTION__ << ": Error : Expected Envelope for Asymmetric "
+                "key(type 1) but instead found type "
+                << static_cast<int32_t>(env_type) << ".\n";
+            print_stacktrace();
             return false;
         }
-        nRunningTotal += nReadNymID;
-        OT_ASSERT(nReadNymID ==
-                  static_cast<uint32_t>(sizeof(uint8_t) * nymid_len));
-        //      OT_ASSERT(nymid_len == nReadNymID);
+        else
+            otLog5 << __FUNCTION__
+            << ": Envelope type: " << static_cast<int32_t>(env_type) << "\n";
+    }
 
-        nymid[nymid_len - 1] = '\0'; // for null terminator. If string is 10
-                                     // bytes int64_t, it's from 0-9, and the
-                                     // null terminator is at index 9.
-        const OTString loopStrNymID(reinterpret_cast<char*>(nymid));
-        free(nymid);
-        nymid = nullptr;
+    // Number of Addressees
+    uint32_t array_size = 0;
+    {
+        {
+            ot_data_t v(sizeof(array_size));
 
-        otLog5 << __FUNCTION__ << ": (LOOP) Current NymID: " << loopStrNymID
-               << "    Strlen:  "
-               << static_cast<int64_t>(loopStrNymID.GetLength()) << "\n";
+            for (auto &a : v) {
+                if (data_it == data.end()) return false;
+                a = *data_it++;
+            }
+            array_size = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
+        }
 
-        // loopStrNymID ... if this matches strNymID then it's the one we're
-        // looking for.
-        // But we have to load it all either way, just to iterate through them,
-        // so might
-        // as well load it all first, then check. If it matches, we use it and
-        // break.
-        // Otherwise we keep iterating until we find it.
-        //
-        // Read its network-order key content size (convert to host-order), and
-        // then
-        // read its key content.
-        uint8_t* ek = nullptr;
-        uint32_t eklen = 0;
-        uint32_t eklen_n = 0;
-        uint32_t nReadLength = 0;
-        uint32_t nReadKey = 0;
-
-        // First we read the encrypted key size.
-        //
-        if (0 == (nReadLength = dataInput.OTfread(
-                      reinterpret_cast<uint8_t*>(&eklen_n),
-                      static_cast<uint32_t>(sizeof(eklen_n))))) {
-            otErr << szFunc << ": Error reading encrypted key size.\n";
+        if (0 == array_size) {
+            otErr << __FUNCTION__ << ": Error : Envelope addressed to no one!";
             return false;
         }
-        nRunningTotal += nReadLength;
-        OT_ASSERT(nReadLength == static_cast<uint32_t>(sizeof(eklen_n)));
+    }
 
-        // convert that key size from network to host endian.
-        //
-        eklen = static_cast<uint32_t>(ntohl(static_cast<uint32_t>(eklen_n)));
-        //      eklen  = EVP_PKEY_size(private_key);  // We read this size from
-        // file now...
 
-        otLog5 << __FUNCTION__
-               << ": EK length:  " << static_cast<int64_t>(eklen) << "   \n";
+    bool bFoundKeyAlready = false;
 
-        //      nRunningTotal += eklen;  // Nope!
 
-        ek = static_cast<uint8_t*>(
-            malloc(static_cast<int32_t>(eklen) *
-                   sizeof(uint8_t))); // I assume this is for the AES key
-        OT_ASSERT(nullptr != ek);
-        memset(static_cast<void*>(ek), 0, static_cast<int32_t>(eklen));
+    struct adr
+    {
+        std::string id;
+        ot_data_t ek;
+    };
 
-        // Next we read the encrypted key itself...
-        //
-        if (0 == (nReadKey = dataInput.OTfread(reinterpret_cast<uint8_t*>(ek),
-                                               static_cast<uint32_t>(eklen)))) {
-            otErr << szFunc << ": Error reading encrypted key.\n";
-            free(ek);
-            ek = nullptr;
-            return false;
-        }
-        nRunningTotal += nReadKey;
+    std::vector<adr> addressees(array_size);
+    for (auto &adr : addressees)
+    {
+        // ID
+        {
+            uint32_t mymIDSize = 0;
+            {
+                ot_data_t v(sizeof(mymIDSize));
 
-        otLog5 << __FUNCTION__
-               << ":    EK First byte: " << static_cast<int32_t>(ek[0])
-               << "     EK Last byte: " << static_cast<int32_t>(ek[eklen - 1])
-               << "\n";
-
-        OT_ASSERT(nReadKey == static_cast<uint32_t>(eklen));
-
-        // If we "found the key already" that means we already found the right
-        // key on
-        // a previous iteration, so therefore we're *definitely* just going to
-        // throw
-        // THIS one away. We just continue on to the next iteration and keep
-        // counting
-        // the bytes.
-        //
-        if (false == bFoundKeyAlready) {
-            // We have NOT found the right key yet, so let's see if this is the
-            // one we're looking for.
-
-            const bool bNymIDMatches =
-                strNymID.Compare(loopStrNymID); // FOUND IT! <==========
-
-            if ((ii == (array_size - 1)) || // If we're on the LAST INDEX in the
-                                            // array (often the only index), OR
-                                            // if the
-                bNymIDMatches) // NymID is a guaranteed match, then we'll try to
-                               // decrypt using this session key.
-            { // (Of course also we know that we haven't found the Key yet, or
-                // we wouldn't even be here.)
-                // NOTE: What if we're on the last index, but the NymID DOES
-                // exist, and it DEFINITELY doesn't match?
-                // In other words, if loopStrNymID EXISTS, and it DEFINITELY
-                // doesn't match (bNymIDMatches is false) then we
-                // DEFINITELY want to skip it. But if bNymIDMatches is false
-                // simply because loopStrNymID is EMPTY, then we
-                // can't rule that key out, in that case.
-                //
-                if (!(loopStrNymID.Exists() &&
-                      !bNymIDMatches)) // Skip if ID was definitely found and
-                                       // definitely doesn't match.
-                {
-                    bFoundKeyAlready = true;
-
-                    theRawEncryptedKey.Assign(static_cast<void*>(ek),
-                                              static_cast<uint32_t>(eklen));
-                    //                  theRawEncryptedKey.Assign(const_cast<const
-                    // void *>(static_cast<void *>(ek)), eklen);
+                for (auto &a : v) {
+                    if (data_it == data.end()) return false;
+                    a = *data_it++;
                 }
+                mymIDSize = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
+            }
+
+            ot_data_t nym(mymIDSize);
+            for (auto &a : nym) {
+                if (data_it == data.end()) return false;
+                a = *data_it++;
+            }
+
+            adr.id.clear();
+            {
+                std::string tmp(nym.begin(), nym.end());
+                adr.id = tmp.c_str();
             }
         }
 
-        free(ek);
-        ek = nullptr;
+        // Encrypted Key
+        {
+            uint32_t eklen = 0;
+            {
+                ot_data_t v(sizeof(eklen));
 
-    } // for
+                for (auto &a : v) {
+                    if (data_it == data.end()) return false;
+                    a = *data_it++;
+                }
+                eklen = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
+            }
 
-    if (false == bFoundKeyAlready) // Todo: AND if list of POTENTIAL matches is
-                                   // also empty...
-    {
-        otOut << __FUNCTION__
-              << ": Sorry: Unable to find a session key for the Nym attempting "
-                 "to open this envelope: " << strNymID << "\n";
-        return false;
-    }
+            if (0 == eklen) {
+                otErr << __FUNCTION__ << ": Error : Unable to get keylength!";
+                return false;
+            }
 
-    // Read network-order IV size (convert to host version) before then reading
-    // IV itself.
-    // (Then update encrypted blocks until evp open final...)
-    //
-    const uint32_t max_iv_length =
-        OTCryptoConfig::SymmetricIvSize(); // I believe this is a max length, so
-                                           // it may not match the actual
-                                           // length.
-
-    // Read the IV SIZE (network order version -- convert to host version.)
-    //
-    uint32_t iv_size_n = 0;
-    uint32_t nReadIVSize = 0;
-
-    if (0 == (nReadIVSize = dataInput.OTfread(
-                  reinterpret_cast<uint8_t*>(&iv_size_n),
-                  static_cast<uint32_t>(sizeof(iv_size_n))))) {
-        otErr << szFunc
-              << ": Error reading IV Size for encrypted symmetric keys.\n";
-        return false;
-    }
-    nRunningTotal += nReadIVSize;
-    OT_ASSERT(nReadIVSize == static_cast<uint32_t>(sizeof(iv_size_n)));
-
-    // convert that iv size from network to HOST endian.
-    //
-    const uint32_t iv_size_host_order = ntohl(static_cast<uint32_t>(iv_size_n));
-
-    if (iv_size_host_order > max_iv_length) {
-        const int64_t l1 = iv_size_host_order, l2 = max_iv_length;
-        otErr << __FUNCTION__ << ": Error: iv_size (" << l1
-              << ") is larger than max_iv_length (" << l2 << ").\n";
-        return false;
-    }
-    else
-        otLog5 << __FUNCTION__
-               << ": IV size: " << static_cast<int64_t>(iv_size_host_order)
-               << "\n";
-
-    // Then read the IV (initialization vector) itself.
-    //
-    if (0 == (nReadIV = dataInput.OTfread(
-                  reinterpret_cast<uint8_t*>(iv),
-                  static_cast<uint32_t>(iv_size_host_order)))) {
-        otErr << szFunc << ": Error reading initialization vector.\n";
-        return false;
-    }
-
-    nRunningTotal += nReadIV;
-    OT_ASSERT(nReadIV == static_cast<uint32_t>(iv_size_host_order));
-
-    otLog5 << __FUNCTION__
-           << ":    IV First byte: " << static_cast<int32_t>(iv[0])
-           << "     IV Last byte: "
-           << static_cast<int32_t>(iv[iv_size_host_order - 1]) << "\n";
-
-    // We read the encrypted key size, then we read the encrypted key itself,
-    // with nReadKey containing
-    // the number of bytes actually read. The IF statement says "if 0 ==" but it
-    // should probably say
-    // "if eklen !=" (right?) Wrong: because I think it's a max length.
-    //
-    // We create an OTData object to store the ciphertext itself, which begins
-    // AFTER the end of the IV.
-    // So we see pointer + nRunningTotal as the starting point for the
-    // ciphertext.
-    // the size of the ciphertext, meanwhile, is the size of the entire thing,
-    // MINUS nRunningTotal.
-    //
-    OTData ciphertext(static_cast<const void*>(
-                          static_cast<const uint8_t*>(dataInput.GetPointer()) +
-                          nRunningTotal),
-                      dataInput.GetSize() - nRunningTotal);
-
-    //
-    const EVP_CIPHER* cipher_type = EVP_aes_128_cbc(); // todo hardcoding.
-    //
-    //  OTPayload
-    //  void   SetPayloadSize   (uint32_t lNewSize);
-    //    const
-    //  void * GetPayloadPointer() const;
-
-    //  OTData
-    //  inline
-    //  uint32_t     GetSize    () const { return m_lSize; }
-    //    bool         IsEmpty    () const;
-    //  virtual void Release    ();
-    //    void         Assign     (const void* pNewData, uint32_t lNewSize);
-    //    void         Concatenate(const void* pNewData, uint32_t lNewSize);
-
-    // int32_t EVP_OpenInit(
-    //          EVP_CIPHER_CTX *ctx,
-    //          EVP_CIPHER *type,
-    //          uint8_t *ek,
-    //          int32_t ekl,
-    //          uint8_t *iv,
-    //          EVP_PKEY *priv);
-
-    //  if (!EVP_OpenInit(&ctx, cipher_type, ek, eklen, iv, private_key))
-    if (!EVP_OpenInit(
-            &ctx, cipher_type,
-            static_cast<const uint8_t*>(theRawEncryptedKey.GetPayloadPointer()),
-            static_cast<int32_t>(theRawEncryptedKey.GetSize()),
-            static_cast<const uint8_t*>(iv), private_key)) {
-
-        // EVP_OpenInit() initializes a cipher context ctx for decryption with
-        // cipher type. It decrypts the encrypted
-        //    symmetric key of length ekl bytes passed in the ek parameter using
-        // the private key priv. The IV is supplied
-        //    in the iv parameter.
-
-        otErr << szFunc << ": EVP_OpenInit: failed.\n";
-        return false;
-    }
-
-    // Now we process ciphertext and write the decrypted data to plaintext.
-    //
-    OTData plaintext;
-
-    // We loop through the ciphertext and process it in blocks...
-    //
-    while (0 <
-           (len = ciphertext.OTfread(reinterpret_cast<uint8_t*>(buffer),
-                                     static_cast<uint32_t>(sizeof(buffer))))) {
-        if (!EVP_OpenUpdate(&ctx, buffer_out, &len_out, buffer,
-                            static_cast<int32_t>(len))) {
-            otErr << szFunc << ": EVP_OpenUpdate: failed.\n";
-            return false;
+            adr.ek.clear();
+            adr.ek.resize(eklen);
+            for (auto &a : adr.ek) {
+                if (data_it == data.end()) return false;
+                a = *data_it++;
+            }
         }
-        else if (len_out > 0)
-            plaintext.Concatenate(reinterpret_cast<void*>(buffer_out),
-                                  static_cast<uint32_t>(len_out));
-        else
-            break;
     }
 
-    if (!EVP_OpenFinal(&ctx, buffer_out, &len_out)) {
-        otErr << szFunc << ": EVP_OpenFinal: failed.\n";
+    uint32_t iv_size = 0;
+    {
+        ot_data_t v(sizeof(iv_size));
+
+        for (auto &a : v) {
+            if (data_it == data.end()) return false;
+            a = *data_it++;
+        }
+        iv_size = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
+    }
+
+    if (0 == iv_size) {
+        otErr << __FUNCTION__ << ": Error : Unable to get iv length!";
         return false;
     }
-    else if (len_out > 0) {
-        bFinalized = true;
-        plaintext.Concatenate(reinterpret_cast<void*>(buffer_out),
-                              static_cast<uint32_t>(len_out));
 
-    }
-    else {
-        // cppcheck-suppress unreadVariable
-        bFinalized = true;
+    ot_data_t iv(iv_size);
+    for (auto &a : iv) {
+        if (data_it == data.end()) return false;
+        a = *data_it++;
     }
 
-    // Make sure it's null-terminated...
-    //
-    uint32_t nIndex =
-        plaintext.GetSize() - 1; // null terminator is already part of length
-                                 // here (it was, or at least should have been,
-                                 // sealed that way in the first place.)
-    (static_cast<uint8_t*>(const_cast<void*>(plaintext.GetPointer())))[nIndex] =
-        '\0';
+    const ot_data_t ciphertext(data_it, data.end());
 
-    // Set it into theOutput (to return the plaintext to the caller)
-    //
-    // if size is 10, then indices are 0..9 and we pass '10' as the size here.
-    // Since it's an OTData, then the 10th byte (at index 9) is expected to
-    // contain
-    // the null terminator.
-    // Thus the ACTUAL string is only 9 bytes int64_t, and is contained in
-    // indices 0..8.
-    //
-    const bool bSetMem = theOutput.MemSet(
-        static_cast<const char*>(plaintext.GetPointer()), plaintext.GetSize());
+    // we now have read the entire sealed message.
 
-    if (bSetMem)
-        otLog5 << __FUNCTION__ << ": Output:\n" << theOutput << "\n\n";
-    else
-        otErr << __FUNCTION__ << ": Error: Failed while trying to memset from "
-                                 "plaintext OTData to output OTString.\n";
+    const EVP_CIPHER* cipher_type = EVP_aes_128_cbc(); // todo hardcoding.
 
-    return bSetMem;
+    ot_data_t text;
+    text.clear();
+
+    for (auto adr : addressees)
+    {
+        if (!our_nym_id.empty() && !adr.id.empty()) {
+            if (0 != our_nym_id.compare(adr.id)) {
+                continue; // we have id's, but they don't match.
+            }
+        }
+
+        bool good_out = true;
+
+        // INSTANTIATE the clean-up object. (scoped per addressee)
+        //
+        EVP_CIPHER_CTX ctx;
+        _OTEnv_Open theNestedInstance(__FUNCTION__, ctx, *pPrivateKey, bFinalized);
+
+        if (!EVP_OpenInit(&ctx, cipher_type,
+            adr.ek.data(),
+            adr.ek.size(),
+            iv.data(), private_key)) {
+
+            // EVP_OpenInit() initializes a cipher context ctx for decryption with
+            // cipher type. It decrypts the encrypted
+            //    symmetric key of length ekl bytes passed in the ek parameter using
+            // the private key priv. The IV is supplied
+            //    in the iv parameter.
+
+            otErr << __FUNCTION__ << ": EVP_OpenInit: failed.\n";
+            good_out = false;
+            break;
+        }
+
+        auto cipher_it = ciphertext.begin();
+
+        ot_data_t in_buf;
+        ot_data_t out_buf;
+
+        ot_data_t out;
+        out.clear();
+        out.reserve(ciphertext.size() + EVP_MAX_IV_LENGTH); // must not have reallocations
+        auto out_it = out.begin();
+
+        for (;;)
+        {
+            const bool end = cipher_it == ciphertext.end();
+
+            if (end || in_buf.size() == 128) // we have a block, lets process it.
+            {
+                ot_data_t out_buf(in_buf.size() + EVP_MAX_IV_LENGTH);
+                {
+                    int out_buf_len;
+                    if (!EVP_OpenUpdate(&ctx, out_buf.data(), &out_buf_len, in_buf.data(), in_buf.size()))
+                    {
+                        good_out = false;
+                        break;
+                    }
+                    out_buf.resize(out_buf_len);
+                }
+                out.resize(out.size() + out_buf.size());
+                std::copy(out_buf.begin(), out_buf.end(), out_it);
+                out_it += out_buf.size();
+                in_buf.clear();
+            }
+
+            if (end) {
+                out_buf.resize(128 + EVP_MAX_IV_LENGTH);
+                {
+                    int out_len;
+                    if (!EVP_OpenFinal(&ctx, out_buf.data(), &out_len))
+                    {
+                        good_out = false;
+                        break;
+                    }
+                    out_buf.resize(out_len);
+                }
+                out.resize(out.size() + out_buf.size());
+                std::copy(out_buf.begin(), out_buf.end(), out_it);
+                out_it += out_buf.size();
+                out_buf.clear();
+                bFinalized = true;
+                break;
+            }
+
+            in_buf.push_back(*cipher_it++);
+        }
+
+        if (!good_out) {
+            break; // failed for this key
+        }
+
+        if (!out.empty()) {
+            text = out;
+            break;
+        }
+    }
+
+    if (text.empty()) {
+        return false; // error.
+    }
+
+    // must be null terminated.
+    if (0 != text.at(text.size() - 1)) {
+        return false; // error.
+    }
+
+    std::string text_str(text.begin(), text.end());
+
+    theOutput.Release();
+    theOutput = text_str.c_str();
+    return theOutput.GetLength();
 }
 
 // If length is 10,
