@@ -837,7 +837,7 @@ bool OTAsymmetricKey_OpenSSL::SavePrivateKeyToString(
 
 // virtual
 bool OTAsymmetricKey_OpenSSL::SaveDecryptedPrivateKeyToString(
-    OTString& strOutput, const OTPasswordData* pPWData) const
+    ot_string_secure& strOutput, const OTPasswordData* pPWData) const
 {
     auto pw_data = const_cast<OTPasswordData*>(pPWData);
 
@@ -869,17 +869,16 @@ bool OTAsymmetricKey_OpenSSL::SaveDecryptedPrivateKeyToString(
     bool bSuccess = false;
 
     int32_t len = 0;
-    uint8_t buffer_pri[4096] = ""; // todo hardcoded
+
+    ot_data_secure_t buffer_pri(4096);
 
     // todo hardcoded 4080 (see array above.)
-    if (0 < (len = BIO_read(bio_out_pri, buffer_pri, 4080))) // returns number
+    if (0 < (len = BIO_read(bio_out_pri, buffer_pri.data(), 4080))) // returns number
         // of bytes
         // successfully
         // read.
     {
-        buffer_pri[len] = '\0';
-        strOutput.Set((const char*)buffer_pri); // so I can write this string to
-        // file in a sec... todo cast
+        strOutput.assign(buffer_pri.begin(), buffer_pri.end());
         bSuccess = true;
     }
     else

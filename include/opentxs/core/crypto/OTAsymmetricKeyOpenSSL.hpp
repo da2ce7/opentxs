@@ -134,6 +134,7 @@
 #define OPENTXS_CORE_CRYPTO_OTASYMMETRICKEYOPENSSL_HPP
 
 #include "crypto/OTAsymmetricKey.hpp"
+#include "OTData.hpp"
 
 namespace opentxs
 {
@@ -224,7 +225,7 @@ public:
         OTString& strOutput, const OTString* pstrReason = nullptr,
         const OTPassword* pImportPassword = nullptr) const;
     virtual bool SaveDecryptedPrivateKeyToString(
-        OTString& strOutput, const OTPasswordData* pPWData = nullptr) const;
+        ot_string_secure& strOutput, const OTPasswordData* pPWData = nullptr) const;
 
     virtual bool LoadPublicKeyFromPGPKey(
         const OTASCIIArmor& strKey); // does NOT handle bookends.

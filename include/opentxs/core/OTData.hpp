@@ -141,10 +141,73 @@ namespace opentxs
 {
 
 
+EXPORT void * _SecureAllocateVoid(const size_t _Count, const size_t _Size);
+
+template<class _Ty> inline // convert into secure.
+_Ty *_SecureAllocate(size_t _Count, _Ty *) {
+    return static_cast<_Ty *>(_SecureAllocateVoid(_Count, sizeof(_Ty)));
+}
+
+EXPORT void _SecureDeallocateVoid(const size_t _Count, const size_t _Size, void * _Ptr);
+
+template<class _Ty> inline // convert into secure.
+void _SecureDeallocate(size_t _Count, _Ty * _Ptr) {
+    return _SecureDeallocateVoid(_Count, sizeof(_Ty), static_cast<void *>(_Ptr));
+}
+
+template<class _Ty>
+class secure_allocator : public std::allocator<_Ty>
+{
+public:
+    template<class _Other>
+    secure_allocator<_Ty>& operator=(const secure_allocator<_Other>&)
+    {	// assign from a related LockedVirtualMemAllocator (do nothing)
+        return (*this);
+    }
+
+    template<class Other>
+    struct rebind {
+        typedef secure_allocator<Other> other;
+    };
+
+    typedef typename std::allocator<_Ty>::pointer pointer;
+    typedef typename std::allocator<_Ty>::size_type size_type;
+
+    pointer allocate(size_type _Count)
+    {	// allocate array of _Count elements
+        return (_SecureAllocate(_Count, (pointer)0));
+    }
+    pointer allocate(size_type _Count, const void *)
+    {	// allocate array of _Count elements, ignore hint
+        return (allocate(_Count));
+    }
+
+    void deallocate(pointer _Ptr, size_type _Count)
+    {	// deallocate object at _Ptr, ignore size
+        return (_SecureDeallocate(_Count, _Ptr));
+    }
+};
+
+
+
+
+
+// for void * data
+typedef std::pair<void * const, const size_t> ot_void_pointer_pair;
+typedef std::pair<const void * const, const size_t> ot_const_void_pointer_pair;
+
+// for strings
+typedef std::basic_string<char, std::char_traits<char>, secure_allocator<char> > ot_string_secure;
+typedef std::basic_istringstream<char, std::char_traits<char>, secure_allocator<char> > ot_secure_istringstream;
+typedef std::basic_stringstream<char, std::char_traits<char>, secure_allocator<char> > ot_secure_stringstream;
+
+
+
 // for variable lengths
 typedef std::vector<uint8_t> ot_data_t;
+typedef std::vector<uint8_t, secure_allocator<uint8_t>> ot_data_secure_t;
 
-// for fixed lenfths
+// for fixed lengths (not secure!)
 typedef std::array<uint8_t, 8> ot_array_8_t;
 typedef std::array<uint8_t, 16> ot_array_16_t;
 typedef std::array<uint8_t, 20> ot_array_20_t;
@@ -152,6 +215,8 @@ typedef std::array<uint8_t, 24> ot_array_24_t;
 typedef std::array<uint8_t, 32> ot_array_32_t;
 typedef std::array<uint8_t, 64> ot_array_64_t;
 typedef std::array<uint8_t, 128> ot_array_128_t;
+
+
 
 
 class OTASCIIArmor;
@@ -175,13 +240,19 @@ public:
     EXPORT void Release_Data();
     void SetSize(uint32_t size);
 
-    inline std::vector<uint8_t> GetDataCopy() const
+    inline ot_data_t GetDataCopy() const
     {
-        return std::vector<uint8_t>(
+        return ot_data_t(
             static_cast<uint8_t*>(data_),
             static_cast<uint8_t*>(data_)+size_);
     }
 
+    inline ot_data_secure_t GetDataCopySecure() const
+    {
+        return ot_data_secure_t(
+            static_cast<uint8_t*>(data_),
+            static_cast<uint8_t*>(data_)+size_);
+    }
 
     inline const void* GetPointer() const
     {

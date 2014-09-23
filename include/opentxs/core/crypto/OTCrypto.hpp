@@ -284,8 +284,8 @@ public:
     // new api (no virtual)
 
     // encoding
-    void encode_data_base64(const ot_data_t& in, ot_data_t& out) const;
-    void decode_data_base64(const ot_data_t& in, ot_data_t& out) const;
+    void encode_data_base64(const ot_data_t& in, std::string& out) const;
+    void decode_data_base64(const std::string& in, ot_data_t& out) const;
 
     // compression
     void compress_data_zlib(const ot_data_t& in, ot_data_t& out) const;
