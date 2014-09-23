@@ -135,9 +135,24 @@
 
 #include <cinttypes>
 #include <vector>
+#include <array>
 
 namespace opentxs
 {
+
+
+// for variable lengths
+typedef std::vector<uint8_t> ot_data_t;
+
+// for fixed lenfths
+typedef std::array<uint8_t, 8> ot_array_8_t;
+typedef std::array<uint8_t, 16> ot_array_16_t;
+typedef std::array<uint8_t, 20> ot_array_20_t;
+typedef std::array<uint8_t, 24> ot_array_24_t;
+typedef std::array<uint8_t, 32> ot_array_32_t;
+typedef std::array<uint8_t, 64> ot_array_64_t;
+typedef std::array<uint8_t, 128> ot_array_128_t;
+
 
 class OTASCIIArmor;
 

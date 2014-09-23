@@ -245,6 +245,9 @@ extern "C" {
 namespace opentxs
 {
 
+typedef OTCrypto::Exception Exception;
+
+
 // OpenSSL / Crypto-lib d-pointer
 #if defined(OT_CRYPTO_USING_GPG)
 
@@ -289,46 +292,6 @@ public:
 struct OTCrypto_CryptoPP
 {
 
-    //! base class for all exceptions thrown copied from Crypto++
-    class CRYPTOPP_DLL Exception : public std::exception
-    {
-    public:
-        //! error types
-        enum ErrorType {
-            //! a method is not implemented
-            NOT_IMPLEMENTED,
-            //! invalid function argument
-            INVALID_ARGUMENT,
-            //! BufferedTransformation received a Flush(true) signal but can't flush buffers
-            CANNOT_FLUSH,
-            //! data integerity check (such as CRC or MAC) failed
-            DATA_INTEGRITY_CHECK_FAILED,
-            //! received input data that doesn't conform to expected format
-            INVALID_DATA_FORMAT,
-            //! was unable to get true result
-            VERIFICATION_FAILURE,
-            //! error reading from input device or writing to output device
-            IO_ERROR,
-            //! some error not belong to any of the above categories
-            OTHER_ERROR
-        };
-
-        explicit Exception(ErrorType errorType, const std::string &s) : m_errorType(errorType), m_what(s) {}
-        virtual ~Exception() throw() {}
-        const char *what() const throw() { return (m_what.c_str()); }
-        const std::string &GetWhat() const { return m_what; }
-        void SetWhat(const std::string &s) { m_what = s; }
-        ErrorType GetErrorType() const { return m_errorType; }
-        void SetErrorType(ErrorType errorType) { m_errorType = errorType; }
-
-    private:
-        ErrorType m_errorType;
-        std::string m_what;
-    };
-
-
-
-
     // encoding
     static void encode_data_base64(const ot_data_t& in, ot_data_t& out);
     static void decode_data_base64(const ot_data_t& in, ot_data_t& out);
@@ -369,6 +332,7 @@ struct OTCrypto_CryptoPP
         const ot_array_16_t& iv,
         ot_data_t& out);
 
+    // rsa
     static void pem_cert_to_der_cert(const std::string& in, ot_data_t& out);
     static void ber_cert_to_der_pubkey(const ot_data_t& in, ot_data_t& out);
 
@@ -377,12 +341,14 @@ struct OTCrypto_CryptoPP
 
     static void ber_privkey_to_der_pubkey(const ot_data_t& in, ot_data_t& out);
 
+    // rsa raw (for pss)
     static void rsa_raw_decrypt_1024(const ot_array_128_t& in, const ot_data_t& key,
         ot_array_128_t& out);
 
     static void rsa_raw_encrypt_1024(const ot_array_128_t& in, const ot_data_t& key,
         ot_array_128_t& out);
 
+    // rsa pss padding
     static void rsa_verify_pkcs1_pss_mgf1_sha256(const ot_data_t& rep,
         const ot_array_32_t& dgst, const int32_t saltLen = -2);
 
@@ -397,6 +363,14 @@ struct OTCrypto_CryptoPP
     // verify
     static void verify_rsa_pss_sha256_samy(const ot_data_t& msg, const ot_data_t& key,
         const ot_array_128_t& sig);
+
+    // encrypt
+    static void encrypt_rsa_pkcs1(const ot_data_t& msg, const ot_data_t& key,
+        ot_array_128_t& out);
+
+    // decrypt
+    static void decrypt_rsa_pkcs1(const ot_array_128_t& msg, const ot_data_t& key,
+        ot_data_t& out);
 
 };
 
@@ -1190,6 +1164,53 @@ void OTCrypto_CryptoPP::verify_rsa_pss_sha256_samy(const ot_data_t& msg, const o
     hash_samy(msg, dgst);
 
     rsa_verify_pkcs1_pss_mgf1_sha256(rep, dgst);
+}
+
+
+
+
+//static
+void OTCrypto_CryptoPP::encrypt_rsa_pkcs1(const ot_data_t& msg, const ot_data_t& key,
+    ot_array_128_t& out)
+{
+    CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor enc = {};
+
+    enc.AccessMaterial().Load(CryptoPP::ArraySource(key.data(), key.size(), true));
+
+    CryptoPP::AutoSeededRandomPool rng;
+    if (!enc.AccessMaterial().Validate(rng, 2))
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "bad public key");
+    }
+
+    enc.Encrypt(rng, msg.data(), msg.size(), out.data());
+}
+
+
+
+//static
+void OTCrypto_CryptoPP::decrypt_rsa_pkcs1(const ot_array_128_t& msg, const ot_data_t& key,
+    ot_data_t& out)
+{
+    CryptoPP::RSAES<CryptoPP::PKCS1v15>::Decryptor dec = {};
+
+    dec.AccessMaterial().Load(CryptoPP::ArraySource(key.data(), key.size(), true));
+
+    CryptoPP::AutoSeededRandomPool rng;
+    if (!dec.AccessMaterial().Validate(rng, 2))
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "bad public key");
+    }
+
+    out.resize(dec.MaxPlaintextLength(msg.size()));
+    auto res = dec.Decrypt(rng, msg.data(), msg.size(), out.data());
+
+    if (!res.isValidCoding)
+    {
+        throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "bad decrypted result");
+    }
+
+    out.resize(res.messageLength);
 }
 
 
@@ -3550,613 +3571,637 @@ bool OTCrypto_OpenSSL::Decrypt(
 #endif
 }
 
+
+struct envelope_t
+{
+    struct addr_t
+    {
+        std::string id;
+        ot_data_t ek;
+    };
+
+    typedef std::vector<addr_t> addr_v_t;
+
+    uint16_t type;
+    addr_v_t addresses;
+    ot_data_t iv;
+    ot_data_t ciphertext;
+};
+
+void encode_envelope(const envelope_t & envelope, ot_data_t & data);
+void decode_envelope(const ot_data_t & data, envelope_t & envelope);
+
+void appendShort(uint16_t in, ot_data_t & data);
+void appendLong(uint32_t in, ot_data_t & data);
+
+uint16_t readShort(ot_data_t::const_iterator* it, const ot_data_t::const_iterator& end);
+uint32_t readLong(ot_data_t::const_iterator* it, const ot_data_t::const_iterator& end);
+
+// set out to size wanted
+void readDataVector(ot_data_t::const_iterator* it, const ot_data_t::const_iterator& end, ot_data_t& out);
+
+
+void encode_envelope(const envelope_t & envelope, ot_data_t & data)
+{
+    data.clear();
+
+    // Type
+    appendShort(envelope.type, data);
+
+    // Number of Addressees
+    appendLong(envelope.addresses.size(), data);
+
+    for (auto addr : envelope.addresses)
+    {
+        // Nym ID
+        appendLong(addr.id.size() +1, data);
+        data.insert(data.end(), addr.id.begin(), addr.id.end());
+        data.push_back(0); // null terminator for string.
+
+        // Encrypted Key
+        appendLong(addr.ek.size(), data);
+        data.insert(data.end(), addr.ek.begin(), addr.ek.end());
+    }
+
+    // IV
+    appendLong(envelope.iv.size(), data);
+    data.insert(data.end(), envelope.iv.begin(), envelope.iv.end());
+
+    // Ciphertext
+    data.insert(data.end(), envelope.ciphertext.begin(), envelope.ciphertext.end());
+}
+
+
+void decode_envelope(const ot_data_t & data, envelope_t & envelope)
+{
+    auto data_it = data.begin();
+
+    envelope.type = 0;
+    envelope.addresses.clear();
+    envelope.iv.clear();
+    envelope.ciphertext.clear();
+
+    auto out = envelope; // take copy.
+
+    // Envelope Type (only 1, for now)
+    {
+        out.type = readShort(&data_it, data.end());
+
+        if (out.type != 1)
+        {
+            throw Exception(Exception::INVALID_DATA_FORMAT,
+                "Type 1 is the only supported envelope type");
+        }
+    }
+
+    // Number of Addressees
+    {
+        out.addresses.resize(readLong(&data_it, data.end()));
+
+        if (out.addresses.empty())
+        {
+            throw Exception(Exception::INVALID_DATA_FORMAT,
+                "Must have at least one addressee");
+        }
+    }
+
+    for (auto& addr : out.addresses)
+    {
+        // Nym ID
+        {
+            ot_data_t nym(readLong(&data_it, data.end()));
+
+            readDataVector(&data_it, data.end(), nym);
+
+            std::string nym_temp(nym.begin(), nym.end());
+            addr.id.clear();
+            addr.id = nym_temp.c_str();
+        }
+
+        // Encrypted Key
+        {
+            addr.ek.clear();
+            addr.ek.resize(readLong(&data_it, data.end()));
+            readDataVector(&data_it, data.end(), addr.ek);
+
+            if (addr.ek.empty())
+            {
+                throw Exception(Exception::INVALID_DATA_FORMAT,
+                    "Key must not be empty!");
+            }
+        }
+    }
+
+    // IV
+    {
+        out.iv.clear();
+        out.iv.resize(readLong(&data_it, data.end()));
+        readDataVector(&data_it, data.end(), out.iv);
+
+        if (out.iv.empty())
+        {
+            throw Exception(Exception::INVALID_DATA_FORMAT,
+                "IV must not be empty!");
+        }
+    }
+
+    // Ciphertext (the rest of the data).
+    out.ciphertext.clear();
+    out.ciphertext.assign(data_it, data.end());
+
+    if (out.ciphertext.empty())
+    {
+        throw Exception(Exception::INVALID_DATA_FORMAT,
+            "Ciphertext must not be empty!");
+    }
+
+    envelope = out;
+    return; // success
+}
+
+
+void appendShort(uint16_t in, ot_data_t & data)
+{
+    auto in_n = htons(in);
+    auto in_n_p = reinterpret_cast<uint8_t *>(&in_n);
+    data.insert(data.end(), in_n_p, in_n_p + sizeof(in_n));
+}
+
+void appendLong(uint32_t in, ot_data_t & data)
+{
+    auto in_n = htonl(in);
+    auto in_n_p = reinterpret_cast<uint8_t *>(&in_n);
+    data.insert(data.end(), in_n_p, in_n_p + sizeof(in_n));
+}
+
+uint16_t readShort(ot_data_t::const_iterator* it, const ot_data_t::const_iterator& end)
+{
+    OT_ASSERT(nullptr != it);
+
+    uint16_t out = 0;
+    ot_data_t v(sizeof(out));
+
+    for (auto &a : v) {
+        if (*it == end)
+            throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "unexpected end of vector");
+        a = *(*it)++;
+    }
+    out = ntohs(*reinterpret_cast<uint16_t *>(v.data()));
+    return out;
+}
+
+uint32_t readLong(ot_data_t::const_iterator* it, const ot_data_t::const_iterator& end)
+{
+    OT_ASSERT(nullptr != it);
+
+    uint32_t out = 0;
+    ot_data_t v(sizeof(out));
+
+    for (auto &a : v) {
+        if (*it == end)
+            throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "unexpected end of vector");
+        a = *(*it)++;
+    }
+    out = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
+    return out;
+}
+
+void readDataVector(ot_data_t::const_iterator* it, const ot_data_t::const_iterator& end, ot_data_t& out)
+{
+    OT_ASSERT(nullptr != it);
+
+    for (auto &a : out) {
+        if (*it == end)
+            throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "unexpected end of vector");
+        a = *(*it)++;
+    }
+}
+
+
 // Seal up as envelope (Asymmetric, using public key and then AES key.)
 
 bool OTCrypto_OpenSSL::Seal(mapOfAsymmetricKeys& RecipPubKeys,
-                            const OTString& theInput, OTData& dataOutput) const
+    const OTString& theInput, OTData& dataOutput) const
 {
-    OT_ASSERT_MSG(!RecipPubKeys.empty(),
-                  "OTCrypto_OpenSSL::Seal: ASSERT: RecipPubKeys.size() > 0");
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
 
-    const char* szFunc = "OTCrypto_OpenSSL::Seal";
+    if (RecipPubKeys.empty()){
+        otErr << __FUNCTION__ << " cannot seal an envelope to noone!" << std::endl;
+        return false;
+    }
 
-    EVP_CIPHER_CTX ctx;
+    ot_array_16_t pvt_rand_key = {}, rand_iv = {};
 
-    uint8_t buffer[4096];
-    uint8_t buffer_out[4096 + EVP_MAX_IV_LENGTH];
-    uint8_t iv[EVP_MAX_IV_LENGTH];
-
-    uint32_t len = 0;
-    int32_t len_out = 0;
-
-    memset(buffer, 0, 4096);
-    memset(buffer_out, 0, 4096 + EVP_MAX_IV_LENGTH);
-    memset(iv, 0, EVP_MAX_IV_LENGTH);
-
-    // The below three arrays are ALL allocated and then cleaned-up inside this
-    // fuction
-    // (Using the below nested class, _OTEnv_Seal.) The first array will contain
-    // useful pointers, but we do NOT delete those.
-    // The next array contains pointers that we DO need to cleanup.
-    // The final array contains integers (sizes.)
-    //
-    EVP_PKEY** array_pubkey =
-        nullptr; // These will be pointers we use, but do NOT need to clean-up.
-    uint8_t** ek = nullptr;   // These we DO need to cleanup...
-    int32_t* eklen = nullptr; // This will just be an array of integers.
-
-    bool bFinalized = false; // If this is set true, then we don't bother to
-                             // cleanup the ctx. (See the destructor below.)
-
-    // This class is used as a nested function, for easier cleanup. (C++ doesn't
-    // directly support nested functions.)
-    // Basically it translates the incoming RecipPubKeys into the low-level
-    // arrays
-    // ek and eklen (that OpenSSL needs.) This also cleans up those same arrays,
-    // once
-    // this object destructs (when we leave scope of this function.)
-    //
-    class _OTEnv_Seal
     {
-    private:
-        _OTEnv_Seal(const _OTEnv_Seal&);
-        _OTEnv_Seal& operator=(const _OTEnv_Seal&);
-        const char* m_szFunc;
-        EVP_CIPHER_CTX& m_ctx;      // reference to openssl cipher context.
-        EVP_PKEY*** m_array_pubkey; // pointer to array of public key pointers.
-        uint8_t*** m_ek;   // pointer to array of encrypted symmetric keys.
-        int32_t** m_eklen; // pointer to array of lengths for each encrypted
-                           // symmetric key
-        mapOfAsymmetricKeys& m_RecipPubKeys; // array of public keys (to
-                                             // initialize the above members
-                                             // with.)
-        int32_t m_nLastPopulatedIndex; // We store the highest-populated index
-                                       // (so we can free() up 'til the same
-                                       // index, in destructor.)
-        bool& m_bFinalized;
+        CryptoPP::AutoSeededRandomPool rng;
 
-    public:
-        _OTEnv_Seal(const char* param_szFunc, EVP_CIPHER_CTX& theCTX,
-                    EVP_PKEY*** param_array_pubkey, uint8_t*** param_ek,
-                    int32_t** param_eklen,
-                    mapOfAsymmetricKeys& param_RecipPubKeys,
-                    bool& param_Finalized)
-            : m_szFunc(param_szFunc)
-            , m_ctx(theCTX)
-            , m_array_pubkey(nullptr)
-            , m_ek(nullptr)
-            , m_eklen(nullptr)
-            , m_RecipPubKeys(param_RecipPubKeys)
-            , m_nLastPopulatedIndex(-1)
-            , m_bFinalized(param_Finalized)
+        rng.GenerateBlock(pvt_rand_key.data(), pvt_rand_key.size());
+        rng.GenerateBlock(rand_iv.data(), rand_iv.size());
+    }
+
+    envelope_t envelope = {};
+    envelope.type = 1;  // only one type for now.
+
+    envelope.iv.assign(rand_iv.begin(), rand_iv.end());
+    envelope.addresses.resize(RecipPubKeys.size());
+
+
+    std::vector<std::vector<uint8_t>> pk_vv(RecipPubKeys.size());
+
+    // get data from RecipPubKeys, and decode pubkey
+    {
+        auto pk_vv_it = pk_vv.begin();
+        auto addr_it = envelope.addresses.begin();
+        for (auto pubkey_pair : RecipPubKeys)
         {
-            if (nullptr == param_szFunc) OT_FAIL;
-            if (nullptr == param_array_pubkey) OT_FAIL;
-            if (nullptr == param_ek) OT_FAIL;
-            if (nullptr == param_eklen) OT_FAIL;
-            OT_ASSERT(!m_RecipPubKeys.empty());
+            (*addr_it++).id = pubkey_pair.first;
 
-            // Notice that each variable is a "pointer to" the actual array that
-            // was passed in.
-            // (So use them that way, inside this class,
-            //  like this:    *m_ek   and   *m_eklen )
-            //
-            m_array_pubkey = param_array_pubkey;
-            m_ek = param_ek;
-            m_eklen = param_eklen;
+            auto lowlevel_pubkey =
+                dynamic_cast<OTAsymmetricKey_OpenSSL*>(pubkey_pair.second);
 
-            // EVP_CIPHER_CTX_init() corresponds to: EVP_CIPHER_CTX_cleanup()
-            // EVP_CIPHER_CTX_cleanup clears all information from a cipher
-            // context and free up any allocated
-            // memory associate with it. It should be called after all
-            // operations using a cipher are complete
-            // so sensitive information does not remain in memory.
-            //
-            EVP_CIPHER_CTX_init(&m_ctx);
-
-            // (*m_array_pubkey)[] array must have m_RecipPubKeys.size() no. of
-            // elements (each containing a pointer
-            // to an EVP_PKEY that we must NOT clean up.)
-            //
-            *m_array_pubkey =
-                (EVP_PKEY**)malloc(m_RecipPubKeys.size() * sizeof(EVP_PKEY*));
-            OT_ASSERT(nullptr != *m_array_pubkey);
-            memset(*m_array_pubkey, 0,
-                   m_RecipPubKeys.size() *
-                       sizeof(EVP_PKEY*)); // size of array length *
-                                           // sizeof(pointer)
-
-            // (*m_ek)[] array must have m_RecipPubKeys.size() no. of elements
-            // (each will contain a pointer from OpenSSL that we must clean up.)
-            //
-            *m_ek = (uint8_t**)malloc(m_RecipPubKeys.size() * sizeof(uint8_t*));
-            if (nullptr == *m_ek) OT_FAIL;
-            memset(*m_ek, 0, m_RecipPubKeys.size() *
-                                 sizeof(uint8_t*)); // size of array length *
-                                                    // sizeof(pointer)
-
-            // (*m_eklen)[] array must also have m_RecipPubKeys.size() no. of
-            // elements (each containing a size as integer.)
-            //
-            *m_eklen = static_cast<int32_t*>(
-                malloc(m_RecipPubKeys.size() * sizeof(int32_t)));
-            OT_ASSERT(nullptr != *m_eklen);
-            memset(*m_eklen, 0, m_RecipPubKeys.size() *
-                                    sizeof(int32_t)); // size of array length *
-                                                      // sizeof(int32_t)
-
-            //
-            // ABOVE is all just above allocating the memory and setting it to 0
-            // / nullptr.
-            //
-            // Whereas BELOW is about populating that memory, so the actual
-            // OTEnvelope::Seal() function can use it.
-            //
-
-            int32_t nKeyIndex = -1; // it will be 0 upon first iteration.
-
-            for (auto& it : m_RecipPubKeys) {
-                ++nKeyIndex; // 0 on first iteration.
-                m_nLastPopulatedIndex = nKeyIndex;
-
-                OTAsymmetricKey* pTempPublicKey =
-                    it.second; // first is the NymID
-                OT_ASSERT(nullptr != pTempPublicKey);
-
-                OTAsymmetricKey_OpenSSL* pPublicKey =
-                    dynamic_cast<OTAsymmetricKey_OpenSSL*>(pTempPublicKey);
-                OT_ASSERT(nullptr != pPublicKey);
-
-                EVP_PKEY* public_key =
-                    const_cast<EVP_PKEY*>(pPublicKey->dp->GetKey());
-                OT_ASSERT(nullptr != public_key);
-
-                // Copy the public key pointer to an array of public key
-                // pointers...
-                //
-                (*m_array_pubkey)[nKeyIndex] =
-                    public_key; // For OpenSSL, it needs an array of ALL the
-                                // public keys.
-
-                // We allocate enough space for the encrypted symmetric key to
-                // be placed
-                // at this index (the space determined based on size of the
-                // public key that
-                // the symmetric key will be encrypted to.) The space is left
-                // empty, for OpenSSL
-                // to populate.
-                //
-                (*m_ek)[nKeyIndex] = (uint8_t*)malloc(
-                    EVP_PKEY_size(public_key)); // (*m_ek)[i] must have room for
-                                                // EVP_PKEY_size(pubk[i]) bytes.
-                OT_ASSERT(nullptr != (*m_ek)[nKeyIndex]);
-                memset((*m_ek)[nKeyIndex], 0, EVP_PKEY_size(public_key));
-            }
+            OTString pk_otstr = {};
+            lowlevel_pubkey->SavePubkeyToString(pk_otstr);
+            std::string pk_str(pk_otstr.Get());
+            ot_data_t ek;
+            OTCrypto_CryptoPP::pem_pubkey_to_der_pubkey(pk_str, ek);
+            *pk_vv_it++ = ek;
         }
+    }
 
-        ~_OTEnv_Seal()
+    // Encrypt secert key to to each public key.
+    {
+        auto addr_it = envelope.addresses.begin();
+        for (auto pk : pk_vv)
         {
-            OT_ASSERT(nullptr != m_array_pubkey); // 1. pointer to an array of
-                                                  // pointers to EVP_PKEY,
-            OT_ASSERT(nullptr != m_ek); // 2. pointer to an array of pointers to
-                                        // encrypted symmetric keys
-            OT_ASSERT(nullptr != m_eklen); // 3. pointer to an array storing the
-                                           // lengths of those keys.
-
-            // Iterate the array of encrypted symmetric keys, and free the key
-            // at each index...
-            //
-            // We know how many there are, because each pointer will otherwise
-            // be nullptr.
-            // Plus we have m_nLastPopulatedIndex, which is obviously as far as
-            // we will go.
-            //
-
-            int32_t nKeyIndex = -1; // it will be 0 upon first iteration.
-            while (nKeyIndex < m_nLastPopulatedIndex) // if
-                                                      // m_nLastPopulatedIndex
-                                                      // is 0, then this loop
-                                                      // will iterate ONCE, with
-                                                      // nKeyIndex incrementing
-                                                      // to 0 on the first line.
-            {
-                ++nKeyIndex; // 0 on first iteration.
-
-                OT_ASSERT(nullptr != (*m_ek)[nKeyIndex]);
-
-                free((*m_ek)[nKeyIndex]);
-                (*m_ek)[nKeyIndex] = nullptr;
-            }
-
-            //
-            // Now free all of the arrays:
-            // 1. an array of pointers to EVP_PKEY,
-            // 2. an array of pointers to encrypted symmetric keys
-            //    (those all being nullptr pointers due to the above
-            // while-loop),
-            //    and
-            // 3. an array storing the lengths of those keys.
-            //
-
-            if (nullptr !=
-                *m_array_pubkey) // NOTE: The individual pubkeys are NOT
-                                 // to be cleaned up, but this array,
-                                 // containing pointers to those
-                                 // pubkeys, IS cleaned up.
-                free(*m_array_pubkey);
-            *m_array_pubkey = nullptr;
-            m_array_pubkey = nullptr;
-            if (nullptr != *m_ek) free(*m_ek);
-            *m_ek = nullptr;
-            m_ek = nullptr;
-            if (nullptr != *m_eklen) free(*m_eklen);
-            *m_eklen = nullptr;
-            m_eklen = nullptr;
-
-            // EVP_CIPHER_CTX_cleanup returns 1 for success and 0 for failure.
-            // EVP_EncryptFinal(), EVP_DecryptFinal() and EVP_CipherFinal()
-            // behave in a similar way to EVP_EncryptFinal_ex(),
-            // EVP_DecryptFinal_ex() and EVP_CipherFinal_ex() except ctx is
-            // automatically cleaned up after the call.
-            //
-            if (!m_bFinalized) {
-                // We only clean this up here, if the "Final" Seal function
-                // didn't get called. (It normally
-                // would have done this for us.)
-
-                if (0 == EVP_CIPHER_CTX_cleanup(&m_ctx))
-                    otErr << m_szFunc << ": Failure in EVP_CIPHER_CTX_cleanup. "
-                                         "(It returned 0.)\n";
-            }
+            ot_array_128_t ek = {};
+            ot_data_t msg(pvt_rand_key.begin(), pvt_rand_key.end());
+            OTCrypto_CryptoPP::encrypt_rsa_pkcs1(msg, pk, ek);
+            (*addr_it++).ek.assign(ek.begin(), ek.end());
         }
-    }; // class _OTEnv_Seal
+    }
 
-    // INSTANTIATE IT (This does all our setup on construction here, AND cleanup
-    // on destruction, whenever exiting this function.)
+    // Encrypt the message to the secert key.
 
-    _OTEnv_Seal local_RAII(szFunc, ctx, &array_pubkey, &ek, &eklen,
-                           RecipPubKeys, bFinalized);
+    if (!theInput.Exists()){
+        otErr << __FUNCTION__ << " cannot seal no message!" << std::endl;
+        return false;
+    }
 
-    // This is where the envelope final contents will be placed.
-    // including the size of the encrypted symmetric key, the symmetric key
-    // itself, the initialization vector, and the ciphertext.
-    //
+    {
+        std::string input_str(theInput.Get());
+        ot_data_t input(input_str.begin(), input_str.end());
+
+        OTCrypto_CryptoPP::encrypt_aes_128_cbc(input, pvt_rand_key,
+            rand_iv, envelope.ciphertext);
+    }
+
+    ot_data_t envelope_data;
+    encode_envelope(envelope, envelope_data);
+
     dataOutput.Release();
+    dataOutput.Assign(envelope_data.data(), envelope_data.size());
+
+    return true;
+
+
+
+#else
+
+
+    struct evp_ctx {
+        EVP_CIPHER_CTX ctx;
+        std::string szFunc;
+        bool released;
+
+        ~evp_ctx() {
+            if (!released)
+                if (0 == EVP_CIPHER_CTX_cleanup(&ctx))
+                    otErr << szFunc << ": Failure in EVP_CIPHER_CTX_cleanup. "
+                    "(It returned 0.)\n";
+        }
+    };
+
+
+    if (RecipPubKeys.empty()){
+        otErr << __FUNCTION__ << " cannot seal an envelope to noone!" << std::endl;
+        return false;
+    }
+
+    envelope_t envelope;
+
+    envelope.type = 1;  // only one type for now.
+
+    envelope.addresses.resize(RecipPubKeys.size());
+
+    std::vector<EVP_PKEY*> pubkey_v;
+    std::vector<std::vector<uint8_t>> ek_vv;
+    std::vector<uint8_t *> ek_vp;
+    std::vector<int32_t> eklen_v;
+
+
+    // get data out of RecipPubKeys.
+    {
+        auto addr_it = envelope.addresses.begin();
+        for (auto pubkey : RecipPubKeys)
+        {
+            (*addr_it++).id = pubkey.first;
+
+            auto lowlevel_pubkey = dynamic_cast<OTAsymmetricKey_OpenSSL*>(pubkey.second);
+            auto key = lowlevel_pubkey->dp->GetKey();
+            pubkey_v.push_back(const_cast<EVP_PKEY*>(key));
+        }
+
+        for (auto pubkey : pubkey_v) {
+            ek_vv.push_back(std::vector<uint8_t>(EVP_PKEY_size(pubkey)));
+        }
+    }
+
+    // create array vector for openssl
+    {
+        ek_vp.clear();
+        for (auto& key : ek_vv)
+        {
+            ek_vp.push_back(key.data());
+        }
+    }
+
+    eklen_v.resize(ek_vp.size());
+
+    evp_ctx the_ctx;
+    EVP_CIPHER_CTX_init(&the_ctx.ctx);
 
     const EVP_CIPHER* cipher_type = EVP_aes_128_cbc(); // todo hardcoding.
 
-    /*
-    int32_t EVP_SealInit(EVP_CIPHER_CTX* ctx, const EVP_CIPHER* type,
-                     uint8_t **ek, int32_t* ekl, uint8_t* iv,
-                     EVP_PKEY **pubk,     int32_t npubk);
-
-     -- ek is an array of buffers where the public-key-encrypted secret key will
-    be written (for each recipient.)
-     -- Each buffer must contain enough room for the corresponding encrypted
-    key: that is,
-            ek[i] must have room for EVP_PKEY_size(pubk[i]) bytes.
-     -- The actual size of each encrypted secret key is written to the array
-    ekl.
-     -- pubk is an array of npubk public keys.
-     */
-
-    //    EVP_PKEY      ** array_pubkey = nullptr;  // These will be pointers we
-    // use, but do NOT need to clean-up.
-    //    uint8_t ** ek           = nullptr;  // These we DO need to cleanup...
-    //    int32_t           *  eklen        = nullptr;  // This will just be an
-    // array of integers.
+    envelope.iv.resize(EVP_CIPHER_iv_length(cipher_type));
 
     if (!EVP_SealInit(
-            &ctx, cipher_type, ek,
-            eklen, // array of buffers for output of encrypted copies of the
-                   // symmetric "session key". (Plus array of ints, to receive
-                   // the size of each key.)
-            iv,    // A buffer where the generated IV is written. Must contain
-                   // room for the corresponding cipher's IV, as determined by
-                   // (for example) EVP_CIPHER_iv_length(type).
-            array_pubkey,
-            static_cast<int32_t>(RecipPubKeys.size()))) // array of public keys
-                                                        // we are addressing
-                                                        // this envelope to.
+        &the_ctx.ctx,       // in
+        cipher_type,        // in
+        ek_vp.data(),       // out (pre-allocated memory)
+        eklen_v.data(),     // out (pre-allocated memory)
+        envelope.iv.data(), // out (pre-allocated memory)
+        pubkey_v.data(),    // in
+        pubkey_v.size())    // in
+        )
     {
-        otErr << szFunc << ": EVP_SealInit: failed.\n";
+        otErr << __FUNCTION__ << ": EVP_SealInit: failed.\n";
         return false;
     }
 
-    // Write the ENVELOPE TYPE (network order version.)
-    //
-    // 0 == Error
-    // 1 == Asymmetric Key  (this function -- Seal / Open)
-    // 2 == Symmetric Key   (other functions -- Encrypt / Decrypt use this.)
-    // Anything else: error.
+    // resize and copy encrypted keys into envelope
+    {
+        auto addr_it = envelope.addresses.begin();
+        auto eklen_v_it = eklen_v.begin();
+        for (auto& ek : ek_vv)
+        {
+            auto s = static_cast<uint32_t>(*eklen_v_it++);
+            ek.resize(s);
 
-    uint16_t temp_env_type = 1; // todo hardcoding.
-    uint16_t env_type_n = static_cast<uint16_t>(
-        htons(static_cast<uint16_t>(temp_env_type))); // Calculate
-                                                      // "network-order" version
-                                                      // of envelope type 1.
-
-    dataOutput.Concatenate(reinterpret_cast<void*>(&env_type_n),
-                           static_cast<uint32_t>(sizeof(env_type_n)));
-
-    // Write the ARRAY SIZE (network order version.)
-
-    uint32_t array_size_n = static_cast<uint32_t>(
-        htonl(static_cast<uint32_t>(RecipPubKeys.size()))); // Calculate
-                                                            // "network-order"
-                                                            // version of array
-                                                            // size.
-
-    dataOutput.Concatenate(reinterpret_cast<void*>(&array_size_n),
-                           static_cast<uint32_t>(sizeof(array_size_n)));
-
-    otLog5 << __FUNCTION__
-           << ": Envelope type:  " << static_cast<int32_t>(ntohs(env_type_n))
-           << "    Array size: " << static_cast<int64_t>(ntohl(array_size_n))
-           << "\n";
-
-    OT_ASSERT(nullptr != ek);
-    OT_ASSERT(nullptr != eklen);
-
-    // Loop through the encrypted symmetric keys, and for each, write its
-    // network-order NymID size, and its NymID, and its network-order content
-    // size,
-    // and its content, to the envelope data contents
-    // (that we are currently building...)
-    //
-    int32_t ii = -1; // it will be 0 upon first iteration.
-
-    for (auto& it : RecipPubKeys) {
-        ++ii; // 0 on first iteration.
-
-        std::string str_nym_id = it.first;
-        //        OTAsymmetricKey * pTempPublicKey = it->second;
-        //        OT_ASSERT(nullptr != pTempPublicKey);
-
-        //        OTAsymmetricKey_OpenSSL * pPublicKey =
-        // dynamic_cast<OTAsymmetricKey_OpenSSL*>(pTempPublicKey);
-        //        OT_ASSERT(nullptr != pPublicKey);
-
-        //        OTIdentifier theNymID;
-        //        bool bCalculatedID = pPublicKey->CalculateID(theNymID); //
-        // Only works for public keys.
-        //
-        //        if (false == bCalculatedID)
-        //        {
-        //            otErr << "%s: Error trying to calculate ID of
-        // recipient.\n", szFunc);
-        //            return false;
-        //        }
-
-        const OTString strNymID(str_nym_id.c_str());
-
-        uint32_t nymid_len = static_cast<uint32_t>(
-            strNymID.GetLength() + 1); // +1 for null terminator.
-        uint32_t nymid_len_n = static_cast<uint32_t>(
-            htonl(nymid_len)); // Calculate "network-order" version of length
-                               // (+1 for null terminator)
-
-        // Write nymid_len_n and strNymID for EACH encrypted symmetric key.
-        //
-        dataOutput.Concatenate(reinterpret_cast<void*>(&nymid_len_n),
-                               static_cast<uint32_t>(sizeof(nymid_len_n)));
-
-        dataOutput.Concatenate(
-            reinterpret_cast<const void*>(strNymID.Get()),
-            static_cast<uint32_t>(nymid_len)); // (+1 for null terminator is
-                                               // included here already, from
-                                               // above.)
-
-        otLog5 << __FUNCTION__ << ": INDEX: " << static_cast<int64_t>(ii)
-               << "  NymID length:  "
-               << static_cast<int64_t>(ntohl(nymid_len_n))
-               << "   Nym ID: " << strNymID
-               << "   Strlen (should be a byte shorter): "
-               << static_cast<int64_t>(strNymID.GetLength()) << "\n";
-
-        //      Write eklen_n and ek for EACH encrypted symmetric key,
-        //
-        //        EVP_PKEY      ** array_pubkey = nullptr;  // These will be
-        // pointers we use, but do NOT need to clean-up.
-        //        uint8_t ** ek           = nullptr;  // These we DO need to
-        // cleanup...
-        //        int32_t           *  eklen        = nullptr;  // This will
-        // just
-        // be an array of integers.
-
-        OT_ASSERT(nullptr != ek[ii]); // assert key pointer not null.
-        OT_ASSERT(eklen[ii] > 0);     // assert key length larger than 0.
-
-        uint32_t eklen_n = static_cast<uint32_t>(htonl(static_cast<uint32_t>(
-            eklen[ii]))); // Calculate "network-order" version of length.
-
-        dataOutput.Concatenate(reinterpret_cast<void*>(&eklen_n),
-                               static_cast<uint32_t>(sizeof(eklen_n)));
-
-        dataOutput.Concatenate(reinterpret_cast<void*>(ek[ii]),
-                               static_cast<uint32_t>(eklen[ii]));
-
-        otLog5 << __FUNCTION__
-               << ": EK length:  " << static_cast<int64_t>(ntohl(eklen_n))
-               << "     First byte: " << static_cast<int32_t>((ek[ii])[0])
-               << "      Last byte: "
-               << static_cast<int32_t>((ek[ii])[eklen[ii] - 1]) << "\n";
-    }
-
-    // Write IV size before then writing IV itself.
-    //
-    uint32_t ivlen = static_cast<uint32_t>(
-        EVP_CIPHER_iv_length(cipher_type)); // Length of IV for this cipher...
-                                            // (TODO: add cipher name to output,
-                                            // and use it for looking up cipher
-                                            // upon Open.)
-                                            //  OT_ASSERT(ivlen > 0);
-    uint32_t ivlen_n = static_cast<uint32_t>(htonl(static_cast<uint32_t>(
-        ivlen))); // Calculate "network-order" version of iv length.
-
-    dataOutput.Concatenate(reinterpret_cast<void*>(&ivlen_n),
-                           static_cast<uint32_t>(sizeof(ivlen_n)));
-
-    dataOutput.Concatenate(reinterpret_cast<void*>(iv),
-                           static_cast<uint32_t>(ivlen));
-
-    otLog5 << __FUNCTION__
-           << ": iv_size: " << static_cast<int64_t>(ntohl(ivlen_n))
-           << "   IV first byte: " << static_cast<int32_t>(iv[0])
-           << "    IV last byte: " << static_cast<int32_t>(iv[ivlen - 1])
-           << "   \n";
-
-    // Next we put the plaintext into a data object so we can process it via
-    // EVP_SealUpdate,
-    // in blocks, into encrypted form in dataOutput. Each iteration of the loop
-    // processes
-    // one block.
-    //
-    OTData plaintext(static_cast<const void*>(theInput.Get()),
-                     theInput.GetLength() + 1); // +1 for null terminator
-
-    // Now we process the input and write the encrypted data to the
-    // output.
-    //
-    while (0 <
-           (len = plaintext.OTfread(reinterpret_cast<uint8_t*>(buffer),
-                                    static_cast<uint32_t>(sizeof(buffer))))) {
-        if (!EVP_SealUpdate(&ctx, buffer_out, &len_out, buffer,
-                            static_cast<int32_t>(len))) {
-            otErr << szFunc << ": EVP_SealUpdate failed.\n";
-            return false;
+            (*addr_it++).ek = ek; // copy into envelope
         }
-        else if (len_out > 0)
-            dataOutput.Concatenate(reinterpret_cast<void*>(buffer_out),
-                                   static_cast<uint32_t>(len_out));
-        else
-            break;
     }
 
-    if (!EVP_SealFinal(&ctx, buffer_out, &len_out)) {
-        otErr << szFunc << ": EVP_SealFinal failed.\n";
+    if (!theInput.Exists()){
+        otErr << __FUNCTION__ << " cannot seal no message!" << std::endl;
         return false;
     }
-    // This is the "final" piece that is added from SealFinal just above.
-    //
-    else if (len_out > 0) {
-        bFinalized = true;
-        dataOutput.Concatenate(reinterpret_cast<void*>(buffer_out),
-                               static_cast<uint32_t>(len_out));
+
+    // encrypt text and save to envelope;
+    {
+        std::string str_input(theInput.Get());
+        ot_data_t input(str_input.begin(), str_input.end());
+
+        auto input_it = input.begin();
+
+        ot_data_t in_buf;
+        ot_data_t out_buf;
+
+        ot_data_t out;
+        out.clear();
+        // Important! Must not have reallocations!
+        out.reserve(input.size() + EVP_MAX_IV_LENGTH);
+        auto out_it = out.begin();
+
+        for (;;)
+        {
+            const bool end = input_it == input.end();
+
+            if (end || in_buf.size() == 128) // we have a block, lets process it.
+            {
+                ot_data_t out_buf(in_buf.size() + EVP_MAX_IV_LENGTH);
+                {
+                    int out_buf_len = 0;
+                    if (!EVP_SealUpdate(&the_ctx.ctx, out_buf.data(), &out_buf_len, in_buf.data(), in_buf.size()))
+                    {
+                        otErr << __FUNCTION__ << " seal update failed!" << std::endl;
+                        return false;
+                    }
+                    out_buf.resize(out_buf_len);
+                }
+                out.resize(out.size() + out_buf.size());
+                std::copy(out_buf.begin(), out_buf.end(), out_it);
+                out_it += out_buf.size();
+                in_buf.clear();
+            }
+
+            if (end) {
+                out_buf.resize(128 + EVP_MAX_IV_LENGTH);
+                {
+                    int out_len = 0;
+                    the_ctx.released = true;
+                    if (!EVP_SealFinal(&the_ctx.ctx, out_buf.data(), &out_len))
+                    {
+                        otErr << __FUNCTION__ << " seal final failed!" << std::endl;
+                        return false;
+                    }
+                    out_buf.resize(out_len);
+                }
+                out.resize(out.size() + out_buf.size());
+                std::copy(out_buf.begin(), out_buf.end(), out_it);
+                out_it += out_buf.size();
+                out_buf.clear();
+                break;
+            }
+
+            in_buf.push_back(*input_it++);
+        }
+
+        envelope.ciphertext = out;
     }
-    else {
-        // cppcheck-suppress unreadVariable
-        bFinalized = true;
-    }
+
+    ot_data_t envelope_data;
+
+    encode_envelope(envelope, envelope_data);
+
+
+    dataOutput.Release();
+    dataOutput.Assign(envelope_data.data(), envelope_data.size());
+
 
     return true;
+#endif
 }
 
-/*
-#include <openssl/evp.h>
-int32_t EVP_OpenInit(EVP_CIPHER_CTX* ctx, EVP_CIPHER* type, uint8_t* ek,
-                 int32_t ekl, uint8_t* iv, EVP_PKEY* priv);
-int32_t EVP_OpenUpdate(EVP_CIPHER_CTX* ctx, uint8_t* out, int32_t* outl,
-uint8_t* in, int32_t inl);
-int32_t EVP_OpenFinal(EVP_CIPHER_CTX* ctx, uint8_t* out, int32_t* outl);
-DESCRIPTION
-
-The EVP envelope routines are a high level interface to envelope decryption.
-They decrypt a public key
- encrypted symmetric key and then decrypt data using it.
-
- int32_t EVP_OpenInit(EVP_CIPHER_CTX* ctx, EVP_CIPHER* type, uint8_t* ek,
-int32_t
-ekl, uint8_t* iv, EVP_PKEY* priv);
-EVP_OpenInit() initializes a cipher context ctx for decryption with cipher type.
-It decrypts the encrypted
- symmetric key of length ekl bytes passed in the ek parameter using the private
-key priv. The IV is supplied
- in the iv parameter.
-
-EVP_OpenUpdate() and EVP_OpenFinal() have exactly the same properties as the
-EVP_DecryptUpdate() and
- EVP_DecryptFinal() routines, as documented on the EVP_EncryptInit(3) manual
-page.
-
-NOTES
-
-It is possible to call EVP_OpenInit() twice in the same way as
-EVP_DecryptInit(). The first call should have
- priv set to nullptr and (after setting any cipher parameters) it should be
-called
-again with type set to nullptr.
-
-If the cipher passed in the type parameter is a variable length cipher then the
-key length will be set to the
-value of the recovered key length. If the cipher is a fixed length cipher then
-the recovered key length must
-match the fixed cipher length.
-
-RETURN VALUES
-
-EVP_OpenInit() returns 0 on error or a non zero integer (actually the recovered
-secret key size) if successful.
-
-EVP_OpenUpdate() returns 1 for success or 0 for failure.
-
-EVP_OpenFinal() returns 0 if the decrypt failed or 1 for success.
-*/
-
-// RSA / AES
 
 bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
     OTString& theOutput,
     const OTPasswordData* pPWData) const
 {
-    class _OTEnv_Open
-    {
-    private:
-        const char* m_szFunc;
-        EVP_CIPHER_CTX& m_ctx;         // reference to openssl cipher context.
-        OTAsymmetricKey& m_privateKey; // reference to OTAsymmetricKey object.
-        bool& m_bFinalized;
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
 
-    public:
-        _OTEnv_Open(const char* param_szFunc, EVP_CIPHER_CTX& theCTX,
-            OTAsymmetricKey& param_privateKey, bool& param_Finalized)
-            : m_szFunc(param_szFunc)
-            , m_ctx(theCTX)
-            , m_privateKey(param_privateKey)
-            , m_bFinalized(param_Finalized)
+    struct private_key_ptr {
+        OTAsymmetricKey_OpenSSL* pvtKey;
+
+        ~private_key_ptr()
         {
-            OT_ASSERT(nullptr != param_szFunc);
-
-            EVP_CIPHER_CTX_init(&m_ctx);
-        }
-
-        ~_OTEnv_Open() // DESTRUCTOR
-        {
-            m_privateKey.ReleaseKey();
-            //
-            // BELOW this point, private_key (which is a member of m_privateKey
-            // is either
-            // cleaned up, or kept based on a timer value. (It MAY not be
-            // cleaned up,
-            // depending on its state.)
-
-            // EVP_CIPHER_CTX_cleanup returns 1 for success and 0 for failure.
-            //
-            if (!m_bFinalized) {
-                if (0 == EVP_CIPHER_CTX_cleanup(&m_ctx))
-                    otErr << m_szFunc << ": Failure in EVP_CIPHER_CTX_cleanup. "
-                    "(It returned 0.)\n";
-            }
-
-            m_szFunc = nullptr;
+            if (nullptr != pvtKey)
+                pvtKey->ReleaseKey();
         }
     };
 
 
-    bool bFinalized = false; // We only clean up the ctx if the Open "Final"
-    // function hasn't been called, since it does that
-    // automatically already.
+    std::string our_nym_id;
+    {
+        OTString nymID;
+        theRecipient.GetIdentifier(nymID);
+        our_nym_id = nymID.Get();
+    }
 
+
+    ot_data_t pvtkey = {};
+    {
+        private_key_ptr ot_privateKey = {};
+
+        auto & theTempPrivateKey =
+            const_cast<OTAsymmetricKey&>(theRecipient.GetPrivateEncrKey());
+
+        ot_privateKey.pvtKey = dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempPrivateKey);
+        OT_ASSERT(nullptr != ot_privateKey.pvtKey);
+
+        OTString pvtk_otstr;
+        if (!ot_privateKey.pvtKey->SaveDecryptedPrivateKeyToString(pvtk_otstr))
+        {
+            otErr << __FUNCTION__
+                << ": Unable to get Private Key from theRecipient!\n";
+            return false;
+        };
+
+        std::string pvtk_str(pvtk_otstr.Get());
+        OTCrypto_CryptoPP::pem_privkey_to_der_privkey(pvtk_str, pvtkey);
+
+        if (pvtkey.empty())
+        {
+            otErr << __FUNCTION__
+                << ": Invalid private key supplied!\n";
+            return false;
+        }
+    }
+
+
+    envelope_t envelope = {};
+
+    try {
+        auto data = dataInput.GetDataCopy();
+        decode_envelope(data, envelope);
+    }
+    catch (Exception e) {
+        otErr << __FUNCTION__ << ": " << e.GetWhat() << std::endl;
+        return false;
+    }
+
+    ot_data_t secert_key = {};
+
+    for (auto addr : envelope.addresses)
+    {
+        if (!our_nym_id.empty() && !addr.id.empty()) {
+            if (0 != our_nym_id.compare(addr.id)) {
+                continue; // we have id's, but they don't match.
+            }
+        }
+
+        try {
+
+            ot_array_128_t ek_a = {};
+            OT_ASSERT(addr.ek.size() == ek_a.size());
+
+            std::copy(addr.ek.begin(), addr.ek.end(), ek_a.begin());
+
+            
+            OTCrypto_CryptoPP::decrypt_rsa_pkcs1(ek_a, pvtkey, secert_key);
+        }
+        catch (Exception e) {
+            continue;
+        }
+    }
+    if (secert_key.empty())
+    {
+        otErr << __FUNCTION__
+            << ": No secert key! (Returning false.)\n";
+        return false;
+    }
+
+
+    ot_array_16_t secert_key_a = {};
+
+    if (secert_key.size() != secert_key_a.size())
+    {
+        otErr << __FUNCTION__
+            << ": Invalid secert key found!\n";
+        return false;
+    }
+
+    std::copy(secert_key.begin(), secert_key.end(), secert_key_a.begin());
+
+    ot_array_16_t iv_a = {};
+
+    if (envelope.iv.size() != iv_a.size())
+    {
+        otErr << __FUNCTION__
+            << ": Invalid secert key found!\n";
+        return false;
+    }
+
+    std::copy(envelope.iv.begin(), envelope.iv.end(), iv_a.begin());
+
+
+    ot_data_t msg = {};
+    OTCrypto_CryptoPP::decrypt_aes_128_cbc(envelope.ciphertext, secert_key_a, iv_a, msg);
+
+    std::string msg_str(msg.begin(), msg.end());
+    theOutput.Release();
+    theOutput = msg_str.c_str();
+
+    return true;
+
+
+
+
+#else
+
+
+
+    struct private_key_ptr {
+        OTAsymmetricKey_OpenSSL* pvtKey;
+
+        ~private_key_ptr()
+        {
+            if (nullptr != pvtKey)
+                pvtKey->ReleaseKey();
+        }
+    };
+
+    struct evp_ctx {
+        EVP_CIPHER_CTX ctx;
+        std::string szFunc;
+        bool released;
+
+        ~evp_ctx() {
+            if (!released)
+                if (0 == EVP_CIPHER_CTX_cleanup(&ctx))
+                    otErr << szFunc << ": Failure in EVP_CIPHER_CTX_cleanup. "
+                    "(It returned 0.)\n";
+        }
+    };
 
     // Grab the NymID of the recipient, so we can find his session
     // key (there might be symmetric keys for several Nyms, not just this
@@ -4169,173 +4214,49 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
         our_nym_id = nymID.Get();
     }
 
-    auto & theTempPrivateKey =
-        const_cast<OTAsymmetricKey&>(theRecipient.GetPrivateEncrKey());
+    private_key_ptr ot_privateKey;
+    EVP_PKEY* private_key = nullptr;
 
-    auto pPrivateKey =
-        dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempPrivateKey);
-    OT_ASSERT(nullptr != pPrivateKey);
+    {
+        auto & theTempPrivateKey =
+            const_cast<OTAsymmetricKey&>(theRecipient.GetPrivateEncrKey());
 
-    auto private_key =
-        const_cast<EVP_PKEY*>(pPrivateKey->dp->GetKey(pPWData));
+        ot_privateKey.pvtKey = dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempPrivateKey);
+        OT_ASSERT(nullptr != ot_privateKey.pvtKey);
 
-    if (nullptr == private_key) {
-        otErr << __FUNCTION__
-            << ": Null private key on recipient. (Returning false.)\n";
-        return false;
+        private_key =
+            const_cast<EVP_PKEY*>(ot_privateKey.pvtKey->dp->GetKey(pPWData));
+
+        if (nullptr == private_key) {
+            otErr << __FUNCTION__
+                << ": Null private key on recipient. (Returning false.)\n";
+            return false;
+        }
     }
-    else
-        otLog5 << __FUNCTION__
-        << ": Private key is available for NymID: " << our_nym_id << " \n";
 
     auto data = dataInput.GetDataCopy();
-    auto data_it = data.begin();
 
-    // Envelope Type (only 1, for now).
-    uint16_t env_type = 0;
-    {
-        {
-            ot_data_t v(sizeof(env_type));
+    envelope_t env;
 
-            for (auto &a : v) {
-                if (data_it == data.end()) return false;
-                a = *data_it++;
-            }
-            env_type = ntohs(*reinterpret_cast<uint16_t *>(v.data()));
-        }
-
-        if (1 != env_type) {
-            otErr << __FUNCTION__ << ": Error : Expected Envelope for Asymmetric "
-                "key(type 1) but instead found type "
-                << static_cast<int32_t>(env_type) << ".\n";
-            print_stacktrace();
-            return false;
-        }
-        else
-            otLog5 << __FUNCTION__
-            << ": Envelope type: " << static_cast<int32_t>(env_type) << "\n";
+    try {
+        decode_envelope(data, env);
     }
-
-    // Number of Addressees
-    uint32_t array_size = 0;
-    {
-        {
-            ot_data_t v(sizeof(array_size));
-
-            for (auto &a : v) {
-                if (data_it == data.end()) return false;
-                a = *data_it++;
-            }
-            array_size = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
-        }
-
-        if (0 == array_size) {
-            otErr << __FUNCTION__ << ": Error : Envelope addressed to no one!";
-            return false;
-        }
-    }
-
-
-    bool bFoundKeyAlready = false;
-
-
-    struct adr
-    {
-        std::string id;
-        ot_data_t ek;
-    };
-
-    std::vector<adr> addressees(array_size);
-    for (auto &adr : addressees)
-    {
-        // ID
-        {
-            uint32_t mymIDSize = 0;
-            {
-                ot_data_t v(sizeof(mymIDSize));
-
-                for (auto &a : v) {
-                    if (data_it == data.end()) return false;
-                    a = *data_it++;
-                }
-                mymIDSize = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
-            }
-
-            ot_data_t nym(mymIDSize);
-            for (auto &a : nym) {
-                if (data_it == data.end()) return false;
-                a = *data_it++;
-            }
-
-            adr.id.clear();
-            {
-                std::string tmp(nym.begin(), nym.end());
-                adr.id = tmp.c_str();
-            }
-        }
-
-        // Encrypted Key
-        {
-            uint32_t eklen = 0;
-            {
-                ot_data_t v(sizeof(eklen));
-
-                for (auto &a : v) {
-                    if (data_it == data.end()) return false;
-                    a = *data_it++;
-                }
-                eklen = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
-            }
-
-            if (0 == eklen) {
-                otErr << __FUNCTION__ << ": Error : Unable to get keylength!";
-                return false;
-            }
-
-            adr.ek.clear();
-            adr.ek.resize(eklen);
-            for (auto &a : adr.ek) {
-                if (data_it == data.end()) return false;
-                a = *data_it++;
-            }
-        }
-    }
-
-    uint32_t iv_size = 0;
-    {
-        ot_data_t v(sizeof(iv_size));
-
-        for (auto &a : v) {
-            if (data_it == data.end()) return false;
-            a = *data_it++;
-        }
-        iv_size = ntohl(*reinterpret_cast<uint32_t *>(v.data()));
-    }
-
-    if (0 == iv_size) {
-        otErr << __FUNCTION__ << ": Error : Unable to get iv length!";
+    catch (Exception e) {
+        otErr << __FUNCTION__ << ": " << e.GetWhat() << std::endl;
         return false;
     }
 
-    ot_data_t iv(iv_size);
-    for (auto &a : iv) {
-        if (data_it == data.end()) return false;
-        a = *data_it++;
-    }
 
-    const ot_data_t ciphertext(data_it, data.end());
-
-    // we now have read the entire sealed message.
-
-    const EVP_CIPHER* cipher_type = EVP_aes_128_cbc(); // todo hardcoding.
+    // Cipher (for now, AES 128 CBC)
+    const EVP_CIPHER* cipher_type = EVP_aes_128_cbc();
 
     ot_data_t text;
     text.clear();
 
-    for (auto adr : addressees)
+    for (auto addr : env.addresses)
     {
-        if (!our_nym_id.empty() && !adr.id.empty()) {
-            if (0 != our_nym_id.compare(adr.id)) {
+        if (!our_nym_id.empty() && !addr.id.empty()) {
+            if (0 != our_nym_id.compare(addr.id)) {
                 continue; // we have id's, but they don't match.
             }
         }
@@ -4344,13 +4265,15 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
 
         // INSTANTIATE the clean-up object. (scoped per addressee)
         //
-        EVP_CIPHER_CTX ctx;
-        _OTEnv_Open theNestedInstance(__FUNCTION__, ctx, *pPrivateKey, bFinalized);
+        evp_ctx the_ctx;
+        EVP_CIPHER_CTX_init(&the_ctx.ctx);
 
-        if (!EVP_OpenInit(&ctx, cipher_type,
-            adr.ek.data(),
-            adr.ek.size(),
-            iv.data(), private_key)) {
+        the_ctx.szFunc = __FUNCTION__;
+        the_ctx.released = false;
+
+        if (!EVP_OpenInit(&the_ctx.ctx, cipher_type,
+            addr.ek.data(), addr.ek.size(),
+            env.iv.data(), private_key)) {
 
             // EVP_OpenInit() initializes a cipher context ctx for decryption with
             // cipher type. It decrypts the encrypted
@@ -4363,26 +4286,27 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
             break;
         }
 
-        auto cipher_it = ciphertext.begin();
+        auto cipher_it = env.ciphertext.begin();
 
         ot_data_t in_buf;
         ot_data_t out_buf;
 
         ot_data_t out;
         out.clear();
-        out.reserve(ciphertext.size() + EVP_MAX_IV_LENGTH); // must not have reallocations
+        // Important! Must not have reallocations!
+        out.reserve(env.ciphertext.size() + EVP_MAX_IV_LENGTH);
         auto out_it = out.begin();
 
         for (;;)
         {
-            const bool end = cipher_it == ciphertext.end();
+            const bool end = cipher_it == env.ciphertext.end();
 
             if (end || in_buf.size() == 128) // we have a block, lets process it.
             {
                 ot_data_t out_buf(in_buf.size() + EVP_MAX_IV_LENGTH);
                 {
-                    int out_buf_len;
-                    if (!EVP_OpenUpdate(&ctx, out_buf.data(), &out_buf_len, in_buf.data(), in_buf.size()))
+                    int out_buf_len = 0;
+                    if (!EVP_OpenUpdate(&the_ctx.ctx, out_buf.data(), &out_buf_len, in_buf.data(), in_buf.size()))
                     {
                         good_out = false;
                         break;
@@ -4398,8 +4322,9 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
             if (end) {
                 out_buf.resize(128 + EVP_MAX_IV_LENGTH);
                 {
-                    int out_len;
-                    if (!EVP_OpenFinal(&ctx, out_buf.data(), &out_len))
+                    int out_len = 0;
+                    the_ctx.released = true;
+                    if (!EVP_OpenFinal(&the_ctx.ctx, out_buf.data(), &out_len))
                     {
                         good_out = false;
                         break;
@@ -4410,7 +4335,6 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
                 std::copy(out_buf.begin(), out_buf.end(), out_it);
                 out_it += out_buf.size();
                 out_buf.clear();
-                bFinalized = true;
                 break;
             }
 
@@ -4418,22 +4342,17 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
         }
 
         if (!good_out) {
-            break; // failed for this key
+            continue; // failed for this key (lets try another)
         }
 
         if (!out.empty()) {
             text = out;
-            break;
+            break; // success
         }
     }
 
     if (text.empty()) {
-        return false; // error.
-    }
-
-    // must be null terminated.
-    if (0 != text.at(text.size() - 1)) {
-        return false; // error.
+        return false; // error. (no data)
     }
 
     std::string text_str(text.begin(), text.end());
@@ -4441,6 +4360,7 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
     theOutput.Release();
     theOutput = text_str.c_str();
     return theOutput.GetLength();
+#endif
 }
 
 // If length is 10,
@@ -5686,18 +5606,18 @@ bool OTCrypto_OpenSSL::SignContract(const OTString& strContractUnsigned,
     std::string contract(strContractUnsigned.Get());
     ot_data_t contract_v(contract.begin(), contract.end());
     
-    ot_data_t key;
+    ot_data_t key = {};
     OTCrypto_CryptoPP::pem_privkey_to_der_privkey(pubKey.Get(), key);
 
-    ot_array_128_t sig;
+    ot_array_128_t sig = {};
     OTCrypto_CryptoPP::sign_rsa_pss_sha256_samy(contract_v, key, sig);
     OTData sig_data(sig.data(), sig.size());
     theSignature.SetAndPackData(sig_data);
 
     return true;
 
-
 #else
+
     OTAsymmetricKey& theTempKey = const_cast<OTAsymmetricKey&>(theKey);
     OTAsymmetricKey_OpenSSL* pTempOpenSSLKey =
         dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempKey);

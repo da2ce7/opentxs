@@ -769,6 +769,7 @@ bool OTAsymmetricKey_OpenSSL::SavePubkeyToString(
         strOutput = str_key.c_str();
         return true;
     }
+    return false;
 }
 
 // virtual
@@ -836,41 +837,34 @@ bool OTAsymmetricKey_OpenSSL::SavePrivateKeyToString(
 
 // virtual
 bool OTAsymmetricKey_OpenSSL::SaveDecryptedPrivateKeyToString(
-    OTString& strOutput, const OTString* pstrReason,
-    const OTPassword* pImportPassword) const
+    OTString& strOutput, const OTPasswordData* pPWData) const
 {
+    auto pw_data = const_cast<OTPasswordData*>(pPWData);
+
+    OTPasswordData thePWData("OTAsymmetricKey_OpenSSL::"
+        "InstantiatePrivateKey is calling "
+        "PEM_read_bio_PrivateKey...");
+
+    if (nullptr == pw_data) pw_data = &thePWData;
+
+
     if (!IsPrivate()) {
         otErr << __FUNCTION__ << ": Error: !IsPrivate() (This function should "
             "only be called on a private key.)\n";
         return false;
     }
 
-    EVP_PKEY* pPrivateKey = dp->GetKeyLowLevel();
-    if (nullptr == pPrivateKey) {
-        otErr
-            << __FUNCTION__
-            << ": Error: Unexpected nullptr pPrivateKey. (Returning false.)\n";
-        return false;
-    }
+    auto pPrivateKey = const_cast<EVP_PKEY *>(dp->GetKey(pPWData)); // get password into memory.
+    OT_ASSERT(nullptr != pPrivateKey);
 
     OpenSSL_BIO bio_out_pri = BIO_new(BIO_s_mem());
     bio_out_pri.setFreeOnly(); // only BIO_free(), not BIO_free_all();
 
-    OTPasswordData thePWData((nullptr != pstrReason)
-        ? pstrReason->Get()
-        : "OTAsymmetricKey_OpenSSL::"
-        "SavePrivateKeyToString is calling "
-        "PEM_write_bio_PrivateKey...");
 
-    if (nullptr == pImportPassword)
-        PEM_write_bio_PrivateKey(bio_out_pri, pPrivateKey, nullptr, nullptr, 0,
-        OTAsymmetricKey::GetPasswordCallback(),
-        &thePWData);
-    else
-        PEM_write_bio_PrivateKey(
-        bio_out_pri, pPrivateKey, nullptr, nullptr, 0, 0,
-        const_cast<void*>(
-        reinterpret_cast<const void*>(pImportPassword->getPassword())));
+    if (nullptr == pw_data) pw_data = &thePWData;
+
+    PEM_write_bio_PrivateKey(bio_out_pri, pPrivateKey, nullptr, nullptr, 0,
+        OTAsymmetricKey::GetPasswordCallback(), pw_data);
 
     bool bSuccess = false;
 

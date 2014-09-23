@@ -142,6 +142,7 @@ class OTASCIIArmor;
 class OTCaller;
 class OTPassword;
 class OTString;
+class OTPasswordData;
 
 // Todo:
 // 1. Add this value to the config file so it becomes merely a default value
@@ -223,8 +224,7 @@ public:
         OTString& strOutput, const OTString* pstrReason = nullptr,
         const OTPassword* pImportPassword = nullptr) const;
     virtual bool SaveDecryptedPrivateKeyToString(
-        OTString& strOutput, const OTString* pstrReason = nullptr,
-        const OTPassword* pImportPassword = nullptr) const;
+        OTString& strOutput, const OTPasswordData* pPWData = nullptr) const;
 
     virtual bool LoadPublicKeyFromPGPKey(
         const OTASCIIArmor& strKey); // does NOT handle bookends.
