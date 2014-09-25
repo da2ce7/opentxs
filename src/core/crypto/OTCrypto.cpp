@@ -232,6 +232,7 @@ extern "C" {
 #include <locale>
 #include <cstdint>
 #include <functional>
+#include <deque>
 
 #ifndef _WIN32
 #include <termios.h>
@@ -296,6 +297,9 @@ struct OTCrypto_CryptoPP
     static void encode_data_base64(const ot_data_t& in, std::string& out);
     static void decode_data_base64(const std::string& in, ot_data_t& out);
     static void decode_data_base64_secure(const ot_string_secure& in, ot_data_secure_t& out);
+
+    static void encode_data_base62(const ot_data_t& in, std::string& out);
+    static void decode_data_base62(const std::string& in, ot_data_t& out);
 
     // compression
     static void compress_data_zlib(const ot_data_t& in, ot_data_t& out);
@@ -422,6 +426,116 @@ void OTCrypto_CryptoPP::decode_data_base64_secure(
 
     out.resize(static_cast<size_t>(dec.TotalBytesRetrievable()));
     out.resize(dec.Get(out.data(), out.size()));
+}
+
+
+// static
+void OTCrypto_CryptoPP::encode_data_base62(const ot_data_t& in,
+    std::string& out)
+{
+    static const ot_data_t vec = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+        'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+        'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z' };
+
+    const auto input = in;  // take a copy
+    out.clear();
+    if (input.empty()) return;
+
+    ot_data_t encoded_values = {};
+
+    CryptoPP::Integer in_n(input.data(), input.size());
+    CryptoPP::Integer dividend = in_n;
+    const CryptoPP::Integer divisor(62);
+
+    for (;;)
+    {
+        CryptoPP::Integer remainder, quotient;
+        CryptoPP::Integer::Divide(remainder, quotient, dividend, divisor);
+        encoded_values.push_back(static_cast<uint8_t>(remainder.ConvertToLong()));
+        if (quotient == 0) break;
+        dividend = quotient;
+    }
+
+    std::deque<char> out_deque = {};
+
+    for (auto val : encoded_values)
+    {
+        out_deque.push_front(vec.at(val));
+    }
+
+    out.clear();
+    out.assign(out_deque.begin(), out_deque.end());
+
+#ifdef _DEBUG
+
+    std::string in_str(out);
+
+    ot_data_t test;
+
+    decode_data_base62(in_str, test);
+
+
+#endif
+
+}
+
+// static
+void OTCrypto_CryptoPP::decode_data_base62(const std::string& in,
+    ot_data_t& out)
+{
+    static const ot_data_t vec = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+        'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+        'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z' };
+
+
+    static std::vector<signed int> vec_lookup = {};
+
+    if (vec_lookup.empty())
+    {
+        vec_lookup.resize(255,-1);
+        size_t i = 0;
+        for (auto v : vec) {
+            vec_lookup.at(v) = i++;
+        }
+    }
+
+    const auto input = in;  // take a copy
+    if (input.empty()) return;
+    out.clear();
+
+    std::vector<byte> in_data = {};
+
+    for (auto c : input) {
+
+        auto r = vec_lookup.at(c);
+        if (r < 0)
+            throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "input contains non-base62 character!");
+
+        in_data.push_back(r);
+    }
+
+    CryptoPP::Integer out_n;
+    const CryptoPP::Integer multiplier(62);
+
+    for (auto a : in_data)
+    {
+        out_n *= multiplier;  // first will be 0 * 62 = 0;
+        out_n += a;
+    }
+
+    ot_data_t out_v(in_data.size());
+    out_n.Encode(out_v.data(), out_v.size());
+
+    const uint8_t zero = {};
+    out.assign(std::find_if_not(
+        out_v.begin(),
+        out_v.end(),
+        std::bind2nd(std::equal_to<uint8_t>(), 0)),
+        out_v.end());
 }
 
 // static
@@ -978,8 +1092,8 @@ void OTCrypto_CryptoPP::rsa_verify_pkcs1_pss_mgf1_sha256(const ot_data_t& rep,
         throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_DATA_TOO_LARGE");
     }
 
-    ot_data_secure_t db(rep_it, rep.end() - hash.DigestSize() - 1);
-    const ot_data_secure_t h(rep_it + db.size(), rep.end() - 1);
+    ot_data_t db(rep_it, rep.end() - hash.DigestSize() - 1);
+    const ot_data_t h(rep_it + db.size(), rep.end() - 1);
     if (h.size() != hash.DigestSize())
     {
         throw Exception(Exception::DATA_INTEGRITY_CHECK_FAILED, "RSA_R_MISMATCH_DERIVED_HASH");
@@ -1051,7 +1165,7 @@ void OTCrypto_CryptoPP::rsa_add_pkcs1_pss_mgf1_sha256(
     *	-2	salt length is autorecovered from signature
     *	-N	reserved
     */
-    ot_data_secure_t salt;
+    ot_data_t salt = {};
     if (saltLen == -1)	salt.resize(hash.DigestSize());
     else if (saltLen == -2);
     else if (saltLen < -2)
@@ -2358,6 +2472,24 @@ uint8_t* OTCrypto_OpenSSL::Base64Decode(const char* input, size_t* out_len,
 void OTCrypto_OpenSSL::SetIDFromBase62String(const OTString& strInput,
                                              OTIdentifier& theOutput) const
 {
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    std::string input(strInput.Get());
+    ot_data_t output = {};
+
+    OTCrypto_CryptoPP::decode_data_base62(input,output);
+
+    theOutput.Release();
+    theOutput.Assign(output.data(),output.size());
+
+
+#else
+    ot_data_t out;
+    std::string input(strInput.Get());
+
+    OTCrypto_CryptoPP::decode_data_base62(input, out);
+
+
     theOutput.Release();
 
     // If it's short, no validate.
@@ -2411,11 +2543,14 @@ void OTCrypto_OpenSSL::SetIDFromBase62String(const OTString& strInput,
         BN_bn2bin(pBigNum, (uint8_t*)(theOutput.GetPointer())); // Todo casting.
     OT_ASSERT(nConverted);
 
+    ot_data_t thedata(theOutput.GetDataCopy());
+
     // BN_bn2bin() converts the absolute value of param 1 into big-endian form
     // and stores it at param2.
     // param2 must point to BN_num_bytes(pBigNum) bytes of memory.
 
     BN_free(pBigNum);
+#endif
 }
 
 // GET (binary id) AS BASE62-ENCODED STRING
@@ -2429,6 +2564,16 @@ void OTCrypto_OpenSSL::SetIDFromBase62String(const OTString& strInput,
 void OTCrypto_OpenSSL::SetBase62StringFromID(const OTIdentifier& theInput,
                                              OTString& strOutput) const
 {
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    std::string out_string;
+    ot_data_t input(theInput.GetDataCopy());
+
+    OTCrypto_CryptoPP::encode_data_base62(input, out_string);
+    strOutput.Set(out_string.c_str());
+
+#else
+
     strOutput.Release();
 
     if (theInput.IsEmpty()) return;
@@ -2459,6 +2604,9 @@ void OTCrypto_OpenSSL::SetBase62StringFromID(const OTIdentifier& theInput,
     std::string strBigInt = bigIntegerToStringBase62(theBigInt);
 
     strOutput.Set(strBigInt.c_str());
+
+#endif
+
 }
 
 bool OTCrypto_OpenSSL::RandomizeMemory(uint8_t* szDestination,
