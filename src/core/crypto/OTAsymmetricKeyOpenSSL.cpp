@@ -837,7 +837,7 @@ bool OTAsymmetricKey_OpenSSL::SavePrivateKeyToString(
 
 // virtual
 bool OTAsymmetricKey_OpenSSL::SaveDecryptedPrivateKeyToString(
-    ot_string_secure& strOutput, const OTPasswordData* pPWData) const
+    ot_string_secure_t& strOutput, const OTPasswordData* pPWData) const
 {
     auto pw_data = const_cast<OTPasswordData*>(pPWData);
 

@@ -193,13 +193,13 @@ public:
 
 
 // for void * data
-typedef std::pair<void * const, const size_t> ot_void_pointer_pair;
-typedef std::pair<const void * const, const size_t> ot_const_void_pointer_pair;
+typedef std::pair<void * const, const size_t> ot_void_pointer_pair_t;
+typedef std::pair<const void * const, const size_t> ot_const_void_pointer_pair_t;
 
 // for strings
-typedef std::basic_string<char, std::char_traits<char>, secure_allocator<char> > ot_string_secure;
-typedef std::basic_istringstream<char, std::char_traits<char>, secure_allocator<char> > ot_secure_istringstream;
-typedef std::basic_stringstream<char, std::char_traits<char>, secure_allocator<char> > ot_secure_stringstream;
+typedef std::basic_string<char, std::char_traits<char>, secure_allocator<char> > ot_string_secure_t;
+typedef std::basic_istringstream<char, std::char_traits<char>, secure_allocator<char> > ot_istringstream_secure_t;
+typedef std::basic_stringstream<char, std::char_traits<char>, secure_allocator<char> > ot_stringstream_secure_t;
 
 
 

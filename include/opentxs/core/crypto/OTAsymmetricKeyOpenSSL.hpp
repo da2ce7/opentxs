@@ -225,7 +225,7 @@ public:
         OTString& strOutput, const OTString* pstrReason = nullptr,
         const OTPassword* pImportPassword = nullptr) const;
     virtual bool SaveDecryptedPrivateKeyToString(
-        ot_string_secure& strOutput, const OTPasswordData* pPWData = nullptr) const;
+        ot_string_secure_t& strOutput, const OTPasswordData* pPWData = nullptr) const;
 
     virtual bool LoadPublicKeyFromPGPKey(
         const OTASCIIArmor& strKey); // does NOT handle bookends.

@@ -146,10 +146,22 @@
 #include "crypto/OTSignature.hpp"
 #include "OTStorage.hpp"
 #include "util/stacktrace.h"
+#include "OTData.hpp"
+#include "crypto/OTAsymmetricKeyOpenSSL.hpp"
 
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 #include <bigint/BigIntegerLibrary.hh>
+#endif
 
 #include <thread>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Winsock2.h>
+#endif
 
 extern "C" {
 #ifdef _WIN32
@@ -190,7 +202,8 @@ extern "C" {
 
 #endif
 
-#if defined(OT_CRYPTO_USING_OPENSSL)
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+#ifdef OT_CRYPTO_USING_OPENSSL
 
 extern "C" {
 #include <openssl/bio.h>
@@ -217,14 +230,15 @@ extern "C" {
 #include <inttypes.h>
 }
 
+
+
 #include "crypto/OTAsymmetricKey_OpenSSLPrivdp.hpp"
 #include "crypto/OpenSSL_BIO.hpp"
 
-#elif defined(OT_CRYPTO_USING_GPG)
-
-#else
-
 #endif
+#endif
+
+
 
 
 #include <iostream>
@@ -249,12 +263,8 @@ namespace opentxs
 typedef OTCrypto::Exception Exception;
 
 
-// OpenSSL / Crypto-lib d-pointer
-#if defined(OT_CRYPTO_USING_GPG)
-
-// Someday    }:-)        OTCrypto_GPG
-
-#elif defined(OT_CRYPTO_USING_OPENSSL)
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+#ifdef OT_CRYPTO_USING_OPENSSL
 
 class OTCrypto_OpenSSL::OTCrypto_OpenSSLdp
 {
@@ -283,10 +293,11 @@ public:
                          const OTString& strHashType,
                          const OTPasswordData* pPWData = nullptr) const;
 
-#ifndef OT_CRYPTO_PREFER_CRYPTOPP
     static const EVP_MD* GetOpenSSLDigestByName(const OTString& theName);
-#endif
 };
+
+#endif
+#endif
 
 #ifdef OT_CRYPTO_PREFER_CRYPTOPP
 
@@ -296,7 +307,7 @@ struct OTCrypto_CryptoPP_pvt
     // encoding
     static void encode_data_base64(const ot_data_t& in, std::string& out);
     static void decode_data_base64(const std::string& in, ot_data_t& out);
-    static void decode_data_base64_secure(const ot_string_secure& in, ot_data_secure_t& out);
+    static void decode_data_base64_secure(const ot_string_secure_t& in, ot_data_secure_t& out);
 
     static void encode_data_base62(const ot_data_t& in, std::string& out);
     static void decode_data_base62(const std::string& in, ot_data_t& out);
@@ -305,6 +316,14 @@ struct OTCrypto_CryptoPP_pvt
     static void compress_data_zlib(const ot_data_t& in, ot_data_t& out);
     static void decompress_data_zlib(const ot_data_t& in, ot_data_t& out,
         const bool attempt = false);
+
+    // random data
+    
+    // preset out-size to amount of data wanted.
+    static void get_random_data(ot_data_t& out);
+    // preset out-size to amount of data wanted.
+    static void get_random_data_secure(ot_data_secure_t& out);
+
 
     // hashing
     typedef std::function < void(const ot_data_t& in, ot_array_32_t& out) >
@@ -343,7 +362,7 @@ struct OTCrypto_CryptoPP_pvt
     static void ber_cert_to_der_pubkey(const ot_data_t& in, ot_data_t& out);
 
     static void pem_pubkey_to_der_pubkey(const std::string& in, ot_data_t& out);
-    static void pem_privkey_to_der_privkey(const ot_string_secure& in, ot_data_secure_t& out);
+    static void pem_privkey_to_der_privkey(const ot_string_secure_t& in, ot_data_secure_t& out);
 
     static void ber_privkey_to_der_pubkey(const ot_data_secure_t& in, ot_data_t& out);
 
@@ -413,7 +432,7 @@ void OTCrypto_CryptoPP_pvt::decode_data_base64(const std::string& in,
 
 // static
 void OTCrypto_CryptoPP_pvt::decode_data_base64_secure(
-    const ot_string_secure& in, ot_data_secure_t& out)
+    const ot_string_secure_t& in, ot_data_secure_t& out)
 {
     const auto input = in;  // take a copy
     if (input.empty()) return;
@@ -592,6 +611,21 @@ void OTCrypto_CryptoPP_pvt::decompress_data_zlib(const ot_data_t& in,
 
     out.resize(static_cast<size_t>(zlibdecompressor.TotalBytesRetrievable()));
     out.resize(zlibdecompressor.Get(out.data(), out.size()));
+}
+
+
+//static
+void OTCrypto_CryptoPP_pvt::get_random_data(ot_data_t& out)
+{
+    CryptoPP::AutoSeededRandomPool rng;
+    rng.GenerateBlock(out.data(), out.size());
+}
+
+//static
+void OTCrypto_CryptoPP_pvt::get_random_data_secure(ot_data_secure_t& out)
+{
+    CryptoPP::AutoSeededRandomPool rng;
+    rng.GenerateBlock(out.data(), out.size());
 }
 
 
@@ -966,22 +1000,22 @@ void OTCrypto_CryptoPP_pvt::pem_pubkey_to_der_pubkey(const std::string& in, ot_d
 }
 
 // static
-void OTCrypto_CryptoPP_pvt::pem_privkey_to_der_privkey(const ot_string_secure& in, ot_data_secure_t& out)
+void OTCrypto_CryptoPP_pvt::pem_privkey_to_der_privkey(const ot_string_secure_t& in, ot_data_secure_t& out)
 {
-    ot_secure_istringstream ss(in);
+    ot_istringstream_secure_t ss(in);
 
-    const std::vector<ot_string_secure> pem_lines = {
+    const std::vector<ot_string_secure_t> pem_lines = {
         "-----BEGIN",
         "ENCRYPTED",
         "PRIVATE",
         "KEY-----",
         "-----END" };
 
-    std::vector<ot_string_secure> key_lines{
-        std::istream_iterator < ot_string_secure > {ss},
-        std::istream_iterator < ot_string_secure > {} };
+    std::vector<ot_string_secure_t> key_lines{
+        std::istream_iterator < ot_string_secure_t > {ss},
+        std::istream_iterator < ot_string_secure_t > {} };
 
-    ot_secure_stringstream key_stream;
+    ot_stringstream_secure_t key_stream;
     for (auto line : key_lines)
     {
         bool good = true;
@@ -995,7 +1029,7 @@ void OTCrypto_CryptoPP_pvt::pem_privkey_to_der_privkey(const ot_string_secure& i
         if (good) key_stream << line;
     }
 
-    ot_string_secure key_str(key_stream.str());
+    ot_string_secure_t key_str(key_stream.str());
 
     decode_data_base64_secure(key_str, out);
 }
@@ -1338,12 +1372,6 @@ void OTCrypto_CryptoPP_pvt::decrypt_rsa_pkcs1(const ot_array_128_t& msg, const o
 
 #endif
 
-#else // Apparently NO crypto engine is defined!
-
-// Perhaps error out here...
-
-#endif // if defined (OT_CRYPTO_USING_OPENSSL), elif defined
-       // (OT_CRYPTO_USING_GPG), else, endif.
 
 // class OTCrypto
 //
@@ -1944,7 +1972,9 @@ bool OTCrypto_Decrypt_Output::Concatenate(const void* pAppendData,
     return false;
 }
 
-#if defined(OT_CRYPTO_USING_OPENSSL)
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+#ifdef OT_CRYPTO_USING_OPENSSL
 
 extern "C" {
 
@@ -1962,6 +1992,9 @@ extern "C" {
 
 #ifndef OT_CRYPTO_PREFER_CRYPTOPP
 #include <openssl/whrlpool.h>
+#endif
+
+#endif
 #endif
 
 //    // Just trying to get Whirlpool working since they added it to OpenSSL
@@ -1993,6 +2026,9 @@ extern "C" {
 //    };
 //#endif // !ANDROID
 
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+
 #ifndef OPENSSL_THREAD_DEFINES
 #define OPENSSL_THREAD_DEFINES
 #include <openssl/opensslconf.h>
@@ -2010,6 +2046,8 @@ OTCrypto_OpenSSL::OTCrypto_OpenSSL()
 OTCrypto_OpenSSL::~OTCrypto_OpenSSL()
 {
 }
+
+#endif
 
 /*
  #include <openssl/ssl.h>
@@ -2140,6 +2178,8 @@ void CRYPTO_lock(int32_t mode, int32_t n, const char* file, int32_t line);
 
  */
 
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+
 std::mutex* OTCrypto_OpenSSL::s_arrayMutex = nullptr;
 
 extern "C" {
@@ -2152,6 +2192,8 @@ void ot_openssl_thread_id(CRYPTO_THREADID*);
 void ot_openssl_locking_callback(int32_t mode, int32_t type, char* file,
                                  int32_t line);
 }
+
+#endif
 
 // done
 /*
@@ -2170,6 +2212,8 @@ void ot_openssl_locking_callback(int32_t mode, int32_t type, char* file,
  error number facility.
 
  */
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 
 #if OPENSSL_VERSION_NUMBER - 0 < 0x10000000L
 unsigned long ot_openssl_thread_id()
@@ -2199,6 +2243,8 @@ void ot_openssl_thread_id(CRYPTO_THREADID* id)
 }
 #endif
 
+#endif
+
 /*
  locking_function(int32_t mode, int32_t n, const char* file, int32_t line) is
  needed to perform locking on
@@ -2217,6 +2263,8 @@ void ot_openssl_thread_id(CRYPTO_THREADID* id)
  debugging.
  */
 
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+
 void ot_openssl_locking_callback(int32_t mode, int32_t type, const char*,
                                  int32_t)
 {
@@ -2227,6 +2275,8 @@ void ot_openssl_locking_callback(int32_t mode, int32_t type, const char*,
         OTCrypto_OpenSSL::s_arrayMutex[type].unlock();
     }
 }
+
+#endif
 
 /*
  --- More code for Base64 Decoding using OpenSSL:
@@ -2320,6 +2370,8 @@ believe base64_encode is using malloc
 }
 */
 
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+
 extern "C" {
 char* ot_openssl_base64_encode(const uint8_t* input, int32_t in_len,
                                int32_t bLineBreaks)
@@ -2398,6 +2450,8 @@ uint8_t* ot_openssl_base64_decode(const char* input, size_t* out_len,
     return buf;
 }
 } // extern "C"
+
+#endif
 
 // Caller responsible to delete [].
 char* OTCrypto_OpenSSL::Base64Encode(const uint8_t* input, int32_t in_len,
@@ -2609,9 +2663,20 @@ void OTCrypto_OpenSSL::SetBase62StringFromID(const OTIdentifier& theInput,
 
 }
 
+// pre_allocated memory.
 bool OTCrypto_OpenSSL::RandomizeMemory(uint8_t* szDestination,
                                        uint32_t nNewSize) const
 {
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    ot_data_secure_t random_memory(nNewSize);
+    OTCrypto_CryptoPP_pvt::get_random_data_secure(random_memory);
+    std::copy(random_memory.begin(), random_memory.end(), szDestination);
+    
+    return true;
+
+
+#else
     OT_ASSERT(nullptr != szDestination);
     OT_ASSERT(nNewSize > 0);
 
@@ -2643,6 +2708,7 @@ bool OTCrypto_OpenSSL::RandomizeMemory(uint8_t* szDestination,
     }
 
     return true;
+#endif
 }
 
 // DeriveKey derives a 128-bit symmetric key from a passphrase.
@@ -2830,7 +2896,22 @@ bool OTCrypto_OpenSSL::CalculateDigest(const OTString& strInput,
                                        const OTString& strHashAlgorithm,
                                        OTIdentifier& theOutput) const
 {
-#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
+
+    theOutput.Release();
+
+    ot_data_t input(strInput.Get(), strInput.Get() + strInput.GetLength());
+
+    ot_array_32_t output;
+
+    OTCrypto_CryptoPP_pvt::get_func_by_name(strHashAlgorithm.Get())(input, output);
+
+    theOutput.Assign(output.data(), output.size());
+
+    return true;
+
+#else
+
     theOutput.Release();
 
     // Some hash algorithms are handled by other methods.
@@ -2868,20 +2949,6 @@ bool OTCrypto_OpenSSL::CalculateDigest(const OTString& strInput,
 
     return true;
 
-#else
-
-    theOutput.Release();
-
-    ot_data_t input(strInput.Get(), strInput.Get() + strInput.GetLength());
-
-    ot_array_32_t output;
-
-    OTCrypto_CryptoPP_pvt::get_func_by_name(strHashAlgorithm.Get())(input, output);
-
-    theOutput.Assign(output.data(), output.size());
-
-    return true;
-
 #endif
 }
 
@@ -2889,44 +2956,7 @@ bool OTCrypto_OpenSSL::CalculateDigest(const OTData& dataInput,
                                        const OTString& strHashAlgorithm,
                                        OTIdentifier& theOutput) const
 {
-#ifndef OT_CRYPTO_PREFER_CRYPTOPP
-    theOutput.Release();
-
-    // Some hash algorithms are handled by other methods.
-    // If those don't handle it, then we'll come back here and use OpenSSL.
-    if (theOutput.CalculateDigestInternal(dataInput, strHashAlgorithm)) {
-        return true;
-    }
-
-    EVP_MD_CTX mdctx;
-    const EVP_MD* md = nullptr;
-
-    uint32_t md_len = 0;
-    uint8_t md_value[EVP_MAX_MD_SIZE]; // I believe this is safe, shouldn't ever
-                                       // be larger than MAX SIZE.
-
-    // Okay, it wasn't any internal hash algorithm, so then which one was it?
-    //
-    md = OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::GetOpenSSLDigestByName(
-        strHashAlgorithm); // todo cleanup ?
-
-    if (!md) {
-        otErr << "OTCrypto_OpenSSL::CalculateDigest"
-              << ": Unknown message digest algorithm: " << strHashAlgorithm
-              << "\n";
-        return false;
-    }
-
-    EVP_MD_CTX_init(&mdctx);
-    EVP_DigestInit_ex(&mdctx, md, nullptr);
-    EVP_DigestUpdate(&mdctx, dataInput.GetPointer(), dataInput.GetSize());
-    EVP_DigestFinal_ex(&mdctx, md_value, &md_len);
-    EVP_MD_CTX_cleanup(&mdctx);
-
-    theOutput.Assign(md_value, md_len);
-
-    return true;
-#else
+#ifdef OT_CRYPTO_PREFER_CRYPTOPP
 
     theOutput.Release();
 
@@ -2941,6 +2971,45 @@ bool OTCrypto_OpenSSL::CalculateDigest(const OTData& dataInput,
     OTCrypto_CryptoPP_pvt::get_func_by_name(strHashAlgorithm.Get())(input, output);
 
     theOutput.Assign(output.data(), output.size());
+
+    return true;
+
+#else
+
+    theOutput.Release();
+
+    // Some hash algorithms are handled by other methods.
+    // If those don't handle it, then we'll come back here and use OpenSSL.
+    if (theOutput.CalculateDigestInternal(dataInput, strHashAlgorithm)) {
+        return true;
+    }
+
+    EVP_MD_CTX mdctx;
+    const EVP_MD* md = nullptr;
+
+    uint32_t md_len = 0;
+    uint8_t md_value[EVP_MAX_MD_SIZE]; // I believe this is safe, shouldn't ever
+    // be larger than MAX SIZE.
+
+    // Okay, it wasn't any internal hash algorithm, so then which one was it?
+    //
+    md = OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::GetOpenSSLDigestByName(
+        strHashAlgorithm); // todo cleanup ?
+
+    if (!md) {
+        otErr << "OTCrypto_OpenSSL::CalculateDigest"
+            << ": Unknown message digest algorithm: " << strHashAlgorithm
+            << "\n";
+        return false;
+    }
+
+    EVP_MD_CTX_init(&mdctx);
+    EVP_DigestInit_ex(&mdctx, md, nullptr);
+    EVP_DigestUpdate(&mdctx, dataInput.GetPointer(), dataInput.GetSize());
+    EVP_DigestFinal_ex(&mdctx, md_value, &md_len);
+    EVP_MD_CTX_cleanup(&mdctx);
+
+    theOutput.Assign(md_value, md_len);
 
     return true;
 
@@ -2976,6 +3045,8 @@ OTPassword* OTCrypto_OpenSSL::InstantiateBinarySecret() const
 }
 
 // done
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 
 void OTCrypto_OpenSSL::thread_setup() const
 {
@@ -3299,6 +3370,8 @@ void OTCrypto_OpenSSL::Init_Override() const
 #endif
 }
 
+#endif
+
 // RAND_status() and RAND_event() return 1 if the PRNG has been seeded with
 // enough data, 0 otherwise.
 
@@ -3325,6 +3398,8 @@ void OTCrypto_OpenSSL::Init_Override() const
 
  ERR_free_strings(), EVP_cleanup() and CRYPTO_cleanup_all_ex_data().
  */
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 
 void OTCrypto_OpenSSL::Cleanup_Override() const
 {
@@ -3399,6 +3474,8 @@ void OTCrypto_OpenSSL::Cleanup_Override() const
     // Update: these are for SSL sockets, they must be called per socket.
     // (IOW: Not needed here for app cleanup.)
 }
+
+#endif
 
 // #define OTCryptoConfig::SymmetricBufferSize()   default: 4096
 
@@ -4235,7 +4312,7 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
         ot_privateKey.pvtKey = dynamic_cast<OTAsymmetricKey_OpenSSL*>(&theTempPrivateKey);
         OT_ASSERT(nullptr != ot_privateKey.pvtKey);
 
-        ot_string_secure pvtk_otstr;
+        ot_string_secure_t pvtk_otstr;
         if (!ot_privateKey.pvtKey->SaveDecryptedPrivateKeyToString(pvtk_otstr))
         {
             otErr << __FUNCTION__
@@ -4672,6 +4749,9 @@ prog_end:
  and I also have a smaller message digest now: 256 bits.
 
  */
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
+
 bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::SignContractDefaultHash(
     const OTString& strContractUnsigned, const EVP_PKEY* pkey,
     OTSignature& theSignature, const OTPasswordData*) const
@@ -4975,6 +5055,9 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::SignContractDefaultHash(
 
 }
 
+#endif
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 // Verify a contract that has been signed with our own default algorithm (aka
 // SAMY hash)
 // Basically we had to customize for that algorithm since, by default, it XORs
@@ -4987,6 +5070,10 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifyContractDefaultHash(
     const OTString& strContractToVerify, const EVP_PKEY* pkey,
     const OTSignature& theSignature, const OTPasswordData*) const
 {
+
+
+
+
 #ifndef OT_CRYPTO_PREFER_CRYPTOPP
 
 
@@ -5663,6 +5750,10 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifyContractDefaultHash(
 #endif
 }
 
+#endif
+
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 // All the other various versions eventually call this one, where the actual
 // work is done.
 bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::SignContract(
@@ -5727,6 +5818,7 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::SignContract(
 
     OT_FAIL;
 }
+#endif
 
 bool OTCrypto_OpenSSL::SignContract(const OTString& strContractUnsigned,
                                     const OTAsymmetricKey& theKey,
@@ -5747,7 +5839,7 @@ bool OTCrypto_OpenSSL::SignContract(const OTString& strContractUnsigned,
         return false;
     }
 
-    ot_string_secure pubKey;
+    ot_string_secure_t pubKey;
     if (!pTempOpenSSLKey->SaveDecryptedPrivateKeyToString(pubKey))
     {
         otErr << __FUNCTION__ << " Unable to get Private Key, returning false! \n";
@@ -5862,6 +5954,9 @@ bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
 #endif
 }
 
+
+
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 // All the other various versions eventually call this one, where the actual
 // work is done.
 bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifySignature(
@@ -5902,127 +5997,10 @@ bool OTCrypto_OpenSSL::OTCrypto_OpenSSLdp::VerifySignature(
 
     OT_FAIL; // we only use the samy hash for now
 }
-
-// Sign the Contract using a private key from a file.
-// theSignature will contain the output.
-bool OTCrypto_OpenSSL::SignContract(const OTString& strContractUnsigned,
-                                    const OTString& strSigHashType,
-                                    const std::string& strCertFileContents,
-                                    OTSignature& theSignature,
-                                    const OTPasswordData* pPWData)
-{
-    OT_ASSERT_MSG(strContractUnsigned.Exists(), "OTCrypto_OpenSSL::"
-                                                "SignContract: ASSERT FAILURE: "
-                                                "strContractUnsigned.Exists()");
-    OT_ASSERT_MSG(
-        strCertFileContents.size() > 2,
-        "Empty strCertFileContents passed to OTCrypto_OpenSSL::SignContract");
-
-    // Create a new memory buffer on the OpenSSL side
-    //
-    OpenSSL_BIO bio =
-        BIO_new_mem_buf((void*)strCertFileContents.c_str(), -1); // todo cast.
-    OT_ASSERT(nullptr != bio);
-
-    // TODO security:
-    /* The old PrivateKey write routines are retained for compatibility.
-     New applications should write private keys using the
-     PEM_write_bio_PKCS8PrivateKey() or PEM_write_PKCS8PrivateKey()
-     routines because they are more secure (they use an iteration count of 2048
-     whereas the traditional routines use a
-     count of 1) unless compatibility with older versions of OpenSSL is
-     important.
-     NOTE: The PrivateKey read routines can be used in all applications because
-     they handle all formats transparently.
-     */
-    OTPasswordData thePWData("(OTCrypto_OpenSSL::SignContract is trying to "
-                             "read the private key...)");
-
-    if (nullptr == pPWData) pPWData = &thePWData;
-
-    bool bSigned = false;
-    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(
-        bio, nullptr, OTAsymmetricKey::GetPasswordCallback(),
-        const_cast<OTPasswordData*>(pPWData));
-
-    if (nullptr == pkey) {
-        otErr << "OTCrypto_OpenSSL::SignContract: "
-              << "Error reading private key from BIO.\n";
-    }
-    else {
-        bSigned = dp_openssl->SignContract(
-            strContractUnsigned, pkey, theSignature, strSigHashType, pPWData);
-
-        EVP_PKEY_free(pkey);
-        pkey = nullptr;
-    }
-
-    return bSigned;
-}
-
-// Presumably the Signature passed in here was just loaded as part of this
-// contract and is
-// somewhere in m_listSignatures. Now it is being verified.
-//
-bool OTCrypto_OpenSSL::VerifySignature(const OTString& strContractToVerify,
-                                       const OTString& strSigHashType,
-                                       const std::string& strCertFileContents,
-                                       const OTSignature& theSignature,
-                                       const OTPasswordData* pPWData) const
-{
-    OT_ASSERT_MSG(strContractToVerify.Exists(),
-                  "OTCrypto_OpenSSL::VerifySignature: ASSERT FAILURE: "
-                  "strContractToVerify.Exists()");
-    OT_ASSERT_MSG(strCertFileContents.size() > 2,
-                  "Empty strCertFileContents passed to "
-                  "OTCrypto_OpenSSL::VerifySignature");
+#endif
 
 
-
-    const char* szFunc = "OTCrypto_OpenSSL::VerifySignature";
-
-    // Create a new memory buffer on the OpenSSL side
-    //
-    OpenSSL_BIO bio =
-        BIO_new_mem_buf((void*)strCertFileContents.c_str(), -1); // todo cast
-    OT_ASSERT(nullptr != bio);
-
-    OTPasswordData thePWData("(OTCrypto_OpenSSL::VerifySignature is trying to "
-        "read the public key...)");
-
-    if (nullptr == pPWData) pPWData = &thePWData;
-
-    X509* x509 =
-        PEM_read_bio_X509(bio, nullptr, OTAsymmetricKey::GetPasswordCallback(),
-        const_cast<OTPasswordData*>(pPWData));
-
-    if (nullptr == x509) {
-        otErr << szFunc << ": Failed reading x509 out of cert file...\n";
-        return false;
-    }
-
-    bool bVerifySig = false;
-    EVP_PKEY* pkey = X509_get_pubkey(x509);
-
-    if (nullptr == pkey) {
-        otErr << szFunc
-            << ": Failed reading public key from x509 from certfile...\n";
-    }
-    else {
-        bVerifySig = dp_openssl->VerifySignature(
-            strContractToVerify, pkey, theSignature, strSigHashType, pPWData);
-
-        EVP_PKEY_free(pkey);
-        pkey = nullptr;
-    }
-
-    // At some point have to call this.
-    //
-    X509_free(x509);
-    x509 = nullptr;
-
-    return true;
-}
+#ifndef OT_CRYPTO_PREFER_CRYPTOPP
 
 // OpenSSL_BIO
 
@@ -6067,17 +6045,7 @@ void OpenSSL_BIO::setFreeOnly()
     bFreeOnly = true;
 }
 
-#elif defined(OT_CRYPTO_USING_GPG)
-
-// Someday    }:-)
-
-#else // Apparently NO crypto engine is defined!
-
-// Perhaps error out here...
-
-#endif // if defined (OT_CRYPTO_USING_OPENSSL), elif defined
-       // (OT_CRYPTO_USING_GPG), else, endif.
-
+#endif
 /*
 
  DERIVING KEYS FROM A PASSWORD

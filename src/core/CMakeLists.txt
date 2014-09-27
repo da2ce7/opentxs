@@ -26,6 +26,7 @@ set(cxx-sources
   OTContract.cpp
   crypto/OTCredential.cpp
   crypto/OTCrypto.cpp
+  crypto/OTCryptoPP.cpp
   OTData.cpp
   OTDataCheck.cpp
   OTDataFolder.cpp
