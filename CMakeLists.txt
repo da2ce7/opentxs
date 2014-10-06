@@ -269,6 +269,10 @@ execute_process(COMMAND git "submodule" "update" "--init" "--recursive" WORKING_
 #-----------------------------------------------------------------------------
 # Source Definitions
 
+if(BUILD_CRYPTOPP)
+  add_definitions(-DOT_CRYPTO_PREFER_CRYPTOPP)
+endif()
+
 if(WIN32)
     if(NOT IDC_STATIC)
         add_definitions(-DIDC_STATIC=-1)
