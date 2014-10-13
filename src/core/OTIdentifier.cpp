@@ -418,22 +418,22 @@ bool OTIdentifier::CalculateDigest(const ot_data_t& dataInput,
 // "SHA256", and you'll
 // instantly have a doubled hash output size  :-)
 //
-bool OTIdentifier::XOR(const OTIdentifier& theInput) const
+bool OTIdentifier::XOR(const OTIdentifier& theInput)
 {
     if (this->empty()) return false;
     if (theInput.empty()) {
-        const_cast<OTIdentifier*>(this)->clear();
+        this->clear();
         return false;
     }
 
     if (theInput.size() < this->size()) {
         // we take the smaller size
-        const_cast<OTIdentifier*>(this)->resize(theInput.size());
+        this->resize(theInput.size());
     }
 
     auto it = theInput.begin();
 
-    for (uint8_t& a : *const_cast<OTIdentifier*>(this)) // todo cast!
+    for (uint8_t& a : *this) // todo cast!
     {
         a ^= *it++;
     }
