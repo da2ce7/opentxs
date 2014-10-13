@@ -273,7 +273,7 @@ bool Identifier::CalculateDigest(const uint8_t* data, size_t len)
     // it is implemented as RIPEMD160 ( SHA256 ( x ) ) => 20 byte hash
     auto hash160 = Hash160(data, data + len);
     resize(20);
-	assign(hash160, hash160 + 20);
+    assign(hash160, hash160 + 20);
     return true;
 }
 
@@ -286,7 +286,7 @@ bool Identifier::CalculateDigest(const String& strInput)
 
 bool Identifier::CalculateDigest(const ot_data_t& dataInput)
 {
-	return CalculateDigest(dataInput.data(), dataInput.size());
+    return CalculateDigest(dataInput.data(), dataInput.size());
 }
 
 // SET (binary id) FROM ENCODED STRING

@@ -136,6 +136,7 @@
 #ifndef SWIG
 
 #include "util/Assert.hpp"
+#include "opentxs/core/OTData.hpp"
 #include "containers/simple_ptr.hpp"
 
 #include <deque>
@@ -891,8 +892,8 @@ public:
     {
     }
 
-    std::vector<uint8_t> m_memBuffer; // Where the actual binary data is stored,
-                                      // before packing.
+    ot_data_t m_memBuffer; // Where the actual binary data is stored,
+                           // before packing.
 
     DEFINE_OT_DYNAMIC_CAST(Blob)
 };
