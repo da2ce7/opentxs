@@ -425,13 +425,15 @@ public:
                                    PackType thePackType);
 
 #if !defined(__clang__) && !defined(_WIN32)
-// -Wuseless-cast does not exist in clang
+// -Wuseless-cast does not exist in clang and windows
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wuseless-cast"
+#endif
+
     DEFINE_OT_DYNAMIC_CAST(Storable)
+
+#if !defined(_WIN32) && !defined(__clang__)
 #pragma GCC diagnostic pop
-#else
-    DEFINE_OT_DYNAMIC_CAST(Storable)
 #endif
 };
 
