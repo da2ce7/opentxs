@@ -237,6 +237,13 @@ bool OTEnvelope::SetFromBookendedString(
     return false;
 }
 
+
+#ifndef _WIN32
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast" //  for deflateInit macro
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+#endif
+
 // Encrypt theInput as envelope using symmetric crypto, using a random AES key
 // that's
 // kept encrypted in an OTSymmetricKey (encrypted using another key derived from
@@ -512,6 +519,11 @@ bool OTEnvelope::Decrypt(String& theOutput, const OTSymmetricKey& theKey,
 
     return bDecrypted;
 }
+
+#ifndef _WIN32
+#pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
+#endif
 
 // RSA / AES
 

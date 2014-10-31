@@ -917,6 +917,12 @@ bool OTSymmetricKey::SerializeFrom(const OTASCIIArmor& ascInput)
     return false;
 }
 
+#ifndef _WIN32
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast" //  for deflateInit macro
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+#endif
+
 bool OTSymmetricKey::SerializeTo(OTData& theOutput) const
 {
 
@@ -1214,6 +1220,11 @@ bool OTSymmetricKey::SerializeFrom(OTData& theInput)
 
     return true;
 }
+
+#ifndef _WIN32
+#pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
+#endif
 
 OTSymmetricKey::OTSymmetricKey()
     : m_bIsGenerated(false)

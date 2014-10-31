@@ -292,6 +292,12 @@ OTASCIIArmor& OTASCIIArmor::operator=(const OTASCIIArmor& strValue)
 
 // Source for these two functions: http://panthema.net/2007/0328-ZLibString.html
 
+
+#ifndef _WIN32
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast" //  for deflateInit macro
+#endif
+
 /** Compress a STL string using zlib with given compression level and return
  * the binary data. */
 std::string OTASCIIArmor::compress_string(
@@ -376,6 +382,10 @@ std::string OTASCIIArmor::decompress_string(const std::string& str) const
 
     return outstring;
 }
+
+#ifndef _WIN32
+#pragma GCC diagnostic pop
+#endif
 
 /// if we pack, compress, encode on the way in, that means, therefore, we
 /// need to decode, uncompress, then unpack on our way out. Right?

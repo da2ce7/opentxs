@@ -528,7 +528,16 @@ char* OTCrypto_OpenSSL::Base64Encode(const uint8_t* input, int32_t in_len,
 
     if (!b64) return buf;
 
+#ifndef _WIN32
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast" //  for deflateInit macro
+#endif
+
     if (!bLineBreaks) BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+
+#ifndef _WIN32
+#pragma GCC diagnostic pop
+#endif
 
     OpenSSL_BIO bmem = BIO_new(BIO_s_mem());
 
@@ -538,11 +547,15 @@ char* OTCrypto_OpenSSL::Base64Encode(const uint8_t* input, int32_t in_len,
         bmem.release();
 
         if (BIO_write(b64join, input, in_len) == in_len) {
-            (void)BIO_flush(b64join);
+#ifndef _WIN32
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wold-style-cast"
+#endif
+            (void)BIO_flush(b64join);
             BIO_get_mem_ptr(b64join, &bptr);
+#ifndef _WIN32
 #pragma GCC diagnostic pop
+#endif
             //    otLog5 << "DEBUG base64_encode size: %" PRId64 ",  in_len:
             // %" PRId64 "\n", bptr->length+1, in_len);
             buf = new char[bptr->length + 1];
@@ -1984,6 +1997,12 @@ bool OTCrypto_OpenSSL::Seal(mapOfAsymmetricKeys& RecipPubKeys,
         return false;
     }
 
+#ifndef _WIN32
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast" //  for deflateInit macro
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+#endif
+
     // Write the ENVELOPE TYPE (network order version.)
     //
     // 0 == Error
@@ -2162,6 +2181,11 @@ bool OTCrypto_OpenSSL::Seal(mapOfAsymmetricKeys& RecipPubKeys,
     }
 
     return true;
+
+#ifndef _WIN32
+#pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
+#endif
 }
 
 /*
@@ -2338,6 +2362,13 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
     // IV itself.
     // (Then update encrypted blocks until evp open final...)
     //
+
+#ifndef _WIN32
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast" //  for deflateInit macro
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+#endif
+
 
     // So here we go...
 
@@ -2770,6 +2801,12 @@ bool OTCrypto_OpenSSL::Open(OTData& dataInput, const OTPseudonym& theRecipient,
                                  "plaintext OTData to output OTString.\n";
 
     return bSetMem;
+
+#ifndef _WIN32
+#pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
+#endif
+
 }
 
 // If length is 10,

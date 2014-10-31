@@ -899,8 +899,17 @@ namespace
 #pragma warning(disable : 4800) // warning C4800: forcing constant value.
 #endif
 
+#ifndef _WIN32
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable" //  for deflateInit macro
+#endif
+
 // invoke set_terminate as part of global constant initialization
 static const bool SET_TERMINATE = std::set_terminate(ot_terminate);
+
+#ifndef _WIN32
+#pragma GCC diagnostic pop
+#endif
 
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -1287,6 +1296,10 @@ void OTLog::SetupSignalHandler()
     if (0 == nCount) {
         ++nCount;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast" //  for deflateInit macro
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+
         OT_HANDLE_SIGNAL(SIGINT)  // Ctrl-C. (So we can shutdown gracefully, I
                                   // suppose, on Ctrl-C.)
         OT_HANDLE_SIGNAL(SIGSEGV) // Segmentation fault.
@@ -1318,6 +1331,9 @@ void OTLog::SetupSignalHandler()
         OT_HANDLE_SIGNAL(SIGSYS) // sent when a process supplies an incorrect
                                  // argument to a system call.
         //      OT_HANDLE_SIGNAL(SIGTRAP) // used by debuggers
+
+#pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
     }
 }
 
