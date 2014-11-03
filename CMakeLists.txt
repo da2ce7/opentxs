@@ -184,7 +184,7 @@ find_library(ZMQ_LIB NAMES
 )
 if (ZMQ_LIB STREQUAL "ZMQ_LIB-NOTFOUND")
   set(ZMQ_LIB_FOUND 0)
-  set(ZMQ_LIBRARY libzmq)
+  set(ZMQ_LIBRARY libzmq-static)
   set(ZMQ_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/libzmq_4/include)
   message(STATUS "System's ZeroMQ not found. Using local ZeroMQ.")
   if(WIN32)
